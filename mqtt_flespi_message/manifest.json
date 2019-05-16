@@ -1,0 +1,10 @@
+{
+    "domain": "mqtt_flespi_message",
+    "name": "Mqtt flespi message",
+    "documentation": "https://flespi.com/blog/smart-home-with-a-human-touch-teaching-home-assistant-to-serve-you-coffee",
+    "requirements": [],
+    "dependencies": [
+      "mqtt"
+    ],
+    "codeowners": []
+  }
