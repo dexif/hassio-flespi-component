@@ -9,7 +9,9 @@ import logging
 import voluptuous as vol
 
 from homeassistant.components import mqtt
-from homeassistant.components.device_tracker import PLATFORM_SCHEMA
+from homeassistant.components.device_tracker import (
+    PLATFORM_SCHEMA as PARENT_PLATFORM_SCHEMA,
+)
 from homeassistant.components.mqtt import CONF_QOS
 from homeassistant.const import (
     CONF_DEVICES,
@@ -17,7 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 
-ATTR_GPS_ACCURACY = "position.hdop" # flespi accuracy parameter
+ATTR_GPS_ACCURACY = "position.hdop" # flespi accuracy parameter for devices that support it in protocol
 ATTR_LATITUDE = "position.latitude"
 ATTR_LONGITUDE = "position.longitude"
 ATTR_BATTERY_LEVEL = "battery.level"
