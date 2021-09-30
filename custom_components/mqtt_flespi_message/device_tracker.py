@@ -9,6 +9,7 @@ import logging
 import voluptuous as vol
 
 from homeassistant.components import mqtt
+
 from homeassistant.components.device_tracker import PLATFORM_SCHEMA
 from homeassistant.components.mqtt import CONF_QOS
 from homeassistant.const import (
