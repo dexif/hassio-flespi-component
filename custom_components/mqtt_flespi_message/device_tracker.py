@@ -9,8 +9,9 @@ import logging
 import voluptuous as vol
 
 from homeassistant.components import mqtt
-
-from homeassistant.components.device_tracker import PLATFORM_SCHEMA
+from homeassistant.components.device_tracker import (
+    PLATFORM_SCHEMA as PARENT_PLATFORM_SCHEMA,
+)
 from homeassistant.components.mqtt import CONF_QOS
 from homeassistant.const import (
     CONF_DEVICES,
@@ -42,6 +43,7 @@ PLATFORM_SCHEMA = PARENT_PLATFORM_SCHEMA.extend(mqtt.SCHEMA_BASE).extend(
 
 
 async def async_setup_scanner(hass, config, async_see, discovery_info=None):
+    """Set up the MQTT JSON tracker."""
     devices = config[CONF_DEVICES]
     qos = config[CONF_QOS]
 
@@ -53,11 +55,11 @@ async def async_setup_scanner(hass, config, async_see, discovery_info=None):
             try:
                 data = GPS_JSON_PAYLOAD_SCHEMA(json.loads(msg.payload))
             except vol.MultipleInvalid:
-               	"""
-                _LOGGER.error("Skipping update for following data "
+                _LOGGER.error(
+                    "Skipping update for following data "
                               "because of missing or malformatted data: %s",
-                              msg.payload)
-                """
+                    msg.payload,
+                )
                 return
             except ValueError:
                 _LOGGER.error("Error parsing JSON payload: %s", msg.payload)
@@ -72,6 +74,7 @@ async def async_setup_scanner(hass, config, async_see, discovery_info=None):
 
 
 def _parse_see_args(dev_id, data):
+    """Parse the payload location parameters, into the format see expects."""
     kwargs = {"gps": (data[ATTR_LATITUDE], data[ATTR_LONGITUDE]), "dev_id": dev_id}
 
     if ATTR_GPS_ACCURACY in data:

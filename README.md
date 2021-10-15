@@ -5,7 +5,7 @@
 
 
 ## Changelog
-
+- 0.1.2 Fix import
 - 0.1.1 Added [HACS](https://github.com/hacs/integration) compatibility
 - 0.1.0 Now compatible with version 0.93
 
