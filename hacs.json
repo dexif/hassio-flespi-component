@@ -3,5 +3,5 @@
     "domains": ["sensor", "device_tracker"],
     "iot_class": ["Cloud Push"],
     "render_readme": true,
-    "version": "0.1.2"
+    "version": "0.1.3"
   }
