@@ -3,6 +3,9 @@ Works with flespi-connected GPS devices.
 Inspired by https://www.home-assistant.io/components/device_tracker.mqtt_json/
 More details about flespi on https://flespi.com/platform
 """
+from __future__ import annotations
+from collections.abc import Awaitable, Callable
+
 import json
 import logging
 
@@ -16,14 +19,14 @@ from homeassistant.components.mqtt import CONF_QOS
 from homeassistant.const import (
     CONF_DEVICES,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 ATTR_GPS_ACCURACY = "position.hdop" # flespi accuracy parameter
 ATTR_LATITUDE = "position.latitude"
 ATTR_LONGITUDE = "position.longitude"
 ATTR_BATTERY_LEVEL = "battery.level"
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,12 +40,17 @@ GPS_JSON_PAYLOAD_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
-PLATFORM_SCHEMA = PARENT_PLATFORM_SCHEMA.extend(mqtt.SCHEMA_BASE).extend(
+PLATFORM_SCHEMA = PARENT_PLATFORM_SCHEMA.extend(mqtt.config.SCHEMA_BASE).extend(
     {vol.Required(CONF_DEVICES): {cv.string: mqtt.valid_subscribe_topic}}
 )
 
 
-async def async_setup_scanner(hass, config, async_see, discovery_info=None):
+async def async_setup_scanner(
+    hass: HomeAssistant,
+    config: ConfigType,
+    async_see: Callable[..., Awaitable[None]],
+    discovery_info: DiscoveryInfoType | None = None,
+) -> bool:
     """Set up the MQTT JSON tracker."""
     devices = config[CONF_DEVICES]
     qos = config[CONF_QOS]
@@ -57,7 +65,7 @@ async def async_setup_scanner(hass, config, async_see, discovery_info=None):
             except vol.MultipleInvalid:
                 _LOGGER.error(
                     "Skipping update for following data "
-                              "because of missing or malformatted data: %s",
+                    "because of missing or malformatted data: %s",
                     msg.payload,
                 )
                 return
