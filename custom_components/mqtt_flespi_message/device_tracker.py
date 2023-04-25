@@ -26,6 +26,11 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 ATTR_GPS_ACCURACY = "position.hdop" # flespi accuracy parameter
 ATTR_LATITUDE = "position.latitude"
 ATTR_LONGITUDE = "position.longitude"
+
+ATTR_ALT_GPS_ACCURACY = "hdop" # flespi accuracy parameter
+ATTR_ALT_LATITUDE = "latitude"
+ATTR_ALT_LONGITUDE = "longitude"
+
 ATTR_BATTERY_LEVEL = "battery.level"
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,10 +88,15 @@ async def async_setup_scanner(
 
 def _parse_see_args(dev_id, data):
     """Parse the payload location parameters, into the format see expects."""
-    kwargs = {"gps": (data[ATTR_LATITUDE], data[ATTR_LONGITUDE]), "dev_id": dev_id}
+    if ATTR_ALT_LATITUDE in data:
+        kwargs = {"gps": (data[ATTR_ALT_LATITUDE], data[ATTR_ALT_LONGITUDE]), "dev_id": dev_id}
+    else:
+        kwargs = {"gps": (data[ATTR_LATITUDE], data[ATTR_LONGITUDE]), "dev_id": dev_id}
 
     if ATTR_GPS_ACCURACY in data:
         kwargs["gps_accuracy"] = data[ATTR_GPS_ACCURACY]
+    if ATTR_ALT_GPS_ACCURACY in data:
+        kwargs["gps_accuracy"] = data[ATTR_ALT_GPS_ACCURACY]
     if ATTR_BATTERY_LEVEL in data:
         kwargs["battery"] = data[ATTR_BATTERY_LEVEL]
     return kwargs

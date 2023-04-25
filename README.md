@@ -5,6 +5,7 @@
 
 
 ## Changelog
+- 0.1.4 support device telemetry position format
 - 0.1.3 Fixed HA compatibility
 - 0.1.2 Fix import
 - 0.1.1 Added [HACS](https://github.com/hacs/integration) compatibility
@@ -21,6 +22,8 @@ device_tracker:
       another: 'flespi/message/gw/channels/7730/another'
       # flespi device
       dexif2: 'flespi/message/gw/devices/173073'
+      # flespi device telemetry position
+      dexiftelemetry: 'flespi/state/gw/devices/173073/telemetry/position'
 ```
 
 You can also add the known devices into the known_devices.yaml file (otherwise they will appear there automatically).
