@@ -11,6 +11,17 @@
           "dev_id": "A unique name for this tracker (e.g. my_car)",
           "topic": "The flespi MQTT topic to subscribe to"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Flespi Device",
+        "data": {
+          "dev_id": "Device name",
+          "topic": "MQTT topic"
+        },
+        "data_description": {
+          "dev_id": "A unique name for this tracker (e.g. my_car)",
+          "topic": "The flespi MQTT topic to subscribe to"
+        }
       }
     },
     "error": {

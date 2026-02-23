@@ -64,3 +64,40 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
             title=dev_id,
             data={"dev_id": dev_id, "topic": topic},
         )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle reconfiguration of an existing entry."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            dev_id = user_input["dev_id"]
+            topic = user_input["topic"]
+
+            if not topic or "#" in topic:
+                errors["topic"] = "invalid_topic"
+
+            if not errors:
+                new_unique_id = f"{DOMAIN}_{dev_id}"
+                if new_unique_id != entry.unique_id:
+                    await self.async_set_unique_id(new_unique_id)
+                    self._abort_if_unique_id_configured()
+
+                return self.async_update_reload_and_abort(
+                    entry,
+                    title=dev_id,
+                    data={"dev_id": dev_id, "topic": topic},
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("dev_id", default=entry.data["dev_id"]): str,
+                    vol.Required("topic", default=entry.data["topic"]): str,
+                }
+            ),
+            errors=errors,
+        )
