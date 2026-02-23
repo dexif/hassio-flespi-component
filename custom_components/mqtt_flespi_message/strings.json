@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Flespi Device",
+        "data": {
+          "dev_id": "Device name",
+          "topic": "MQTT topic"
+        },
+        "data_description": {
+          "dev_id": "A unique name for this tracker (e.g. my_car)",
+          "topic": "The flespi MQTT topic to subscribe to"
+        }
+      }
+    },
+    "error": {
+      "invalid_topic": "The MQTT topic format is invalid"
+    },
+    "abort": {
+      "already_configured": "This device is already configured"
+    }
+  },
+  "issues": {
+    "yaml_deprecated": {
+      "title": "YAML configuration is deprecated",
+      "description": "Your mqtt_flespi_message YAML configuration has been imported into the UI. Please remove the `mqtt_flespi_message` platform from your `configuration.yaml` file and restart Home Assistant."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "speed": {
+        "name": "Speed"
+      },
+      "altitude": {
+        "name": "Altitude"
+      },
+      "direction": {
+        "name": "Direction"
+      },
+      "satellites": {
+        "name": "Satellites"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      }
+    }
+  }
+}
