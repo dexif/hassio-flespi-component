@@ -178,11 +178,14 @@ async def _test_direct_connection(hass, token: str) -> str | None:
             outcome["error"] = None
         loop.call_soon_threadsafe(done.set)
 
-    client = build_direct_client(
+    # build_direct_client calls tls_set() which does blocking disk I/O;
+    # run in executor to stay off the event loop.
+    client = await hass.async_add_executor_job(
+        build_direct_client,
         f"ha-{DOMAIN}-test-{uuid.uuid4().hex[:8]}",
         token,
-        use_tls=True,
-        protocol=DEFAULT_PROTOCOL,
+        True,
+        DEFAULT_PROTOCOL,
     )
     client.on_connect = _on_connect
 

@@ -47,20 +47,23 @@ class FlespiRestClient:
         except aiohttp.ClientError as err:
             raise FlespiApiError(f"flespi GET {path} network error: {err}") from err
 
+        # HTTP errors may carry plain-text bodies (e.g. `404 Not Found` from a
+        # proxy) that aren't valid JSON — surface the status + body directly
+        # without pretending the server returned malformed JSON.
+        if resp.status >= 400:
+            preview = text[:300] if text else "<empty>"
+            raise FlespiApiError(
+                f"flespi GET {path} -> HTTP {resp.status}: {preview}"
+            )
+
         try:
             body = json.loads(text)
         except (ValueError, TypeError) as err:
             preview = text[:300] if text else "<empty>"
             raise FlespiApiError(
-                f"flespi GET {path} -> HTTP {resp.status}: "
-                f"malformed JSON ({err}); body preview: {preview!r}"
+                f"flespi GET {path} -> malformed JSON ({err}); body preview: {preview!r}"
             ) from err
 
-        if resp.status >= 400:
-            errors = body.get("errors") if isinstance(body, dict) else None
-            raise FlespiApiError(
-                f"flespi GET {path} -> HTTP {resp.status}: {errors or body}"
-            )
         result = body.get("result") if isinstance(body, dict) else None
         if not isinstance(result, list):
             raise FlespiApiError(

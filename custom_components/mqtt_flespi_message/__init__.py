@@ -282,18 +282,28 @@ async def _migrate_group(
             raise RuntimeError(f"Migration import flow returned {result}")
     else:
         # Main entry already exists — append subentries (may happen if the user
-        # had a v3 install and also some v<3 entries lying around). The
-        # async_add_subentry API takes a fully-formed ConfigSubentry; we
-        # construct it from our ConfigSubentryData dicts. subentry_id is
-        # generated automatically by ConfigSubentry's default_factory.
+        # had a v3 install and also some v<3 entries lying around). Skip any
+        # subentry whose unique_id already lives on the main entry (e.g. the
+        # previous migration run left it there and the legacy entry is now
+        # just stale).
+        existing_uids = {s.unique_id for s in main_entry.subentries.values()}
         for sub_data in subentries_data:
+            sub_uid = sub_data.get("unique_id")
+            if sub_uid in existing_uids:
+                _LOGGER.info(
+                    "Subentry %s already present on %s; dropping stale legacy entry only",
+                    sub_uid,
+                    main_entry.entry_id,
+                )
+                continue
             subentry = ConfigSubentry(
                 subentry_type=sub_data["subentry_type"],
                 title=sub_data["title"],
-                unique_id=sub_data.get("unique_id"),
+                unique_id=sub_uid,
                 data=MappingProxyType(dict(sub_data["data"])),
             )
             hass.config_entries.async_add_subentry(main_entry, subentry)
+            existing_uids.add(sub_uid)
 
     # Only after the new main entry/subentries exist do we drop the legacy ones.
     for old in entries:

@@ -156,7 +156,12 @@ class DirectClientPool:
                 host, _, use_tls, protocol, token = key
                 # Stable per-key client_id; safe across HA restarts because clean_session=True.
                 client_id = f"ha-{DOMAIN}-pool-{abs(hash(key)):x}"
-                raw_client = build_direct_client(client_id, token, use_tls, protocol)
+                # build_direct_client calls paho's tls_set() which loads CA
+                # certs from disk synchronously — move it to an executor so we
+                # don't block HA's event loop.
+                raw_client = await self.hass.async_add_executor_job(
+                    build_direct_client, client_id, token, use_tls, protocol
+                )
                 pool_client = FlespiDirectClient(self.hass, key, raw_client)
                 await pool_client.connect()
                 self._clients[key] = pool_client
