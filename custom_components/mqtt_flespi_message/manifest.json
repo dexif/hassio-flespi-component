@@ -9,5 +9,5 @@
   "codeowners": [],
   "config_flow": true,
   "iot_class": "cloud_push",
-  "version": "0.3.0a2"
+  "version": "0.3.0"
 }
