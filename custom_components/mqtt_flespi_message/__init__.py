@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from types import MappingProxyType
@@ -73,21 +74,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     per_subentry: dict[str, FlespiCoordinator] = {}
     domain_data[entry.entry_id] = per_subentry
 
-    for subentry in entry.subentries.values():
-        if subentry.subentry_type != SUBENTRY_TYPE_DEVICE:
-            continue
+    # Build a coordinator per subentry up-front so REST discovery can run in
+    # parallel across devices. A serial loop means N devices × 15s REST timeout
+    # in the worst case, which trips HA's "setup taking over 10 seconds" warning.
+    device_subentries = [
+        s for s in entry.subentries.values() if s.subentry_type == SUBENTRY_TYPE_DEVICE
+    ]
+    coords: list[tuple[str, FlespiCoordinator, str]] = []
+    for subentry in device_subentries:
         _migrate_legacy_tracker_entity(hass, subentry.data[CONF_DEV_ID])
-        coord = FlespiCoordinator(hass, entry, subentry)
+        dev_id = subentry.data.get(CONF_DEV_ID, subentry.subentry_id)
+        coords.append((subentry.subentry_id, FlespiCoordinator(hass, entry, subentry), dev_id))
+
+    # Parallel REST discovery. Exceptions are captured and logged per coordinator
+    # so a single failure doesn't abort the entire entry setup.
+    prepare_results = await asyncio.gather(
+        *(coord.async_prepare() for _, coord, _ in coords),
+        return_exceptions=True,
+    )
+    for (_, _, dev_id), result in zip(coords, prepare_results):
+        if isinstance(result, Exception):
+            _LOGGER.exception(
+                "async_prepare failed for device '%s'", dev_id, exc_info=result
+            )
+
+    # Start MQTT subscriptions serially — they all go through the pool which
+    # serializes connection setup on its lock, so gathering here gives no win
+    # and complicates teardown on partial failure.
+    for subentry_id, coord, dev_id in coords:
         try:
-            await coord.async_prepare()
             await coord.async_start()
         except Exception:  # noqa: BLE001
-            _LOGGER.exception(
-                "Failed to start coordinator for device '%s'",
-                subentry.data.get(CONF_DEV_ID, subentry.subentry_id),
-            )
+            _LOGGER.exception("Failed to start MQTT for device '%s'", dev_id)
             continue
-        per_subentry[subentry.subentry_id] = coord
+        per_subentry[subentry_id] = coord
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -212,14 +232,19 @@ async def _migrate_legacy_entries(hass: HomeAssistant) -> None:
     for old in legacy:
         groups.setdefault(_conn_key(old), []).append(old)
 
-    for key, entries in groups.items():
-        try:
-            await _migrate_group(hass, key, entries)
-        except Exception:  # noqa: BLE001
+    # Migrate groups in parallel. Each group is independent — different main
+    # entries, different subentries — so there's no shared state to serialize on.
+    results = await asyncio.gather(
+        *(_migrate_group(hass, key, entries) for key, entries in groups.items()),
+        return_exceptions=True,
+    )
+    for (key, entries), result in zip(groups.items(), results):
+        if isinstance(result, Exception):
             _LOGGER.exception(
                 "Migration failed for group %s — leaving %d entries untouched",
                 key,
                 len(entries),
+                exc_info=result,
             )
 
 
@@ -229,6 +254,14 @@ async def _migrate_group(
     unique_id = _main_unique_id_for_key(key)
     subentries_data = [_subentry_data_from_legacy(e) for e in entries]
     main_entry = _find_main_entry(hass, unique_id)
+
+    _LOGGER.debug(
+        "Migrating group %s (%d legacy entries → main uid=%s, existing=%s)",
+        key,
+        len(entries),
+        unique_id,
+        main_entry.entry_id if main_entry else None,
+    )
 
     if main_entry is None:
         # No existing v3 main entry for this connection — create one via the
@@ -244,6 +277,7 @@ async def _migrate_group(
                 "subentries_data": subentries_data,
             },
         )
+        _LOGGER.debug("Migration flow returned %s for group %s", result["type"], key)
         if result["type"] != "create_entry":
             raise RuntimeError(f"Migration import flow returned {result}")
     else:

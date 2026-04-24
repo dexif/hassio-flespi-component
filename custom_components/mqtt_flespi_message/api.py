@@ -41,7 +41,7 @@ class FlespiRestClient:
                 url,
                 headers=self._headers,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 text = await resp.text()
         except aiohttp.ClientError as err:
