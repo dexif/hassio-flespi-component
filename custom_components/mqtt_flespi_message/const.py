@@ -10,6 +10,15 @@ CONF_MODE = "mode"
 MODE_HA_MQTT = "ha_mqtt"
 MODE_DIRECT = "direct"
 
+# Subentry type (each flespi device is a subentry of a connection main entry)
+SUBENTRY_TYPE_DEVICE = "device"
+
+# Per-device config keys (stored on each subentry)
+CONF_DEV_ID = "dev_id"
+CONF_TOPIC = "topic"
+# Form-only key for direct mode (not persisted — the topic is stored instead)
+CONF_FLESPI_DEVICE_ID = "flespi_device_id"
+
 # Direct-mode config keys
 CONF_TOKEN = "token"
 CONF_HOST = "host"

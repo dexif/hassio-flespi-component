@@ -78,9 +78,13 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up flespi device tracker from a config entry."""
-    coordinator: FlespiCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([FlespiDeviceTracker(coordinator)])
+    """Set up a flespi device tracker for every device subentry."""
+    per_subentry: dict[str, FlespiCoordinator] = hass.data[DOMAIN][entry.entry_id]
+    for subentry_id, coordinator in per_subentry.items():
+        async_add_entities(
+            [FlespiDeviceTracker(coordinator)],
+            config_subentry_id=subentry_id,
+        )
 
 
 class FlespiDeviceTracker(TrackerEntity):

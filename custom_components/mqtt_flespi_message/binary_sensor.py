@@ -22,16 +22,17 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: FlespiCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[BinarySensorEntity] = []
-    if coordinator.mode == MODE_DIRECT and coordinator.flespi_device_id is not None:
-        entities.append(FlespiOnlineBinarySensor(coordinator))
-    entities.extend(
-        FlespiBinarySensor(coordinator, spec)
-        for spec in coordinator.binary_sensor_specs
-    )
-    if entities:
-        async_add_entities(entities)
+    per_subentry: dict[str, FlespiCoordinator] = hass.data[DOMAIN][entry.entry_id]
+    for subentry_id, coordinator in per_subentry.items():
+        entities: list[BinarySensorEntity] = []
+        if coordinator.mode == MODE_DIRECT and coordinator.flespi_device_id is not None:
+            entities.append(FlespiOnlineBinarySensor(coordinator))
+        entities.extend(
+            FlespiBinarySensor(coordinator, spec)
+            for spec in coordinator.binary_sensor_specs
+        )
+        if entities:
+            async_add_entities(entities, config_subentry_id=subentry_id)
 
 
 class FlespiOnlineBinarySensor(FlespiEntity, BinarySensorEntity):

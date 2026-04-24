@@ -2,59 +2,114 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from types import MappingProxyType
+from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import (
+    SOURCE_IMPORT,
+    ConfigEntry,
+    ConfigSubentry,
+    ConfigSubentryData,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AUTO_DISCOVERY, CONF_MODE, DOMAIN, MODE_HA_MQTT, PLATFORMS
+from .const import (
+    CONF_AUTO_DISCOVERY,
+    CONF_DEV_ID,
+    CONF_HOST,
+    CONF_MODE,
+    CONF_PORT,
+    CONF_PROTOCOL,
+    CONF_TOKEN,
+    CONF_TOPIC,
+    CONF_USE_TLS,
+    DEFAULT_HOST,
+    DEFAULT_PORT_TLS,
+    DEFAULT_PROTOCOL,
+    DOMAIN,
+    MODE_DIRECT,
+    MODE_HA_MQTT,
+    PLATFORMS,
+    SUBENTRY_TYPE_DEVICE,
+)
 from .coordinator import FlespiCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the mqtt_flespi_message integration."""
+    """Set up the integration; run the v<3 → v3 migration once per restart."""
+    await _migrate_legacy_entries(hass)
     return True
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate a config entry from an older schema version."""
-    if entry.version == 1:
-        # v1 predates both the mode selector and auto-discovery. Stamp the
-        # legacy behavior explicitly so runtime code can trust both fields.
-        new_data = {
-            **entry.data,
-            CONF_MODE: MODE_HA_MQTT,
-            CONF_AUTO_DISCOVERY: False,
-        }
-        hass.config_entries.async_update_entry(entry, data=new_data, version=2)
-        _LOGGER.info("Migrated %s from v1 to v2", entry.entry_id)
+    """No-op at the per-entry level.
+
+    All migration work happens globally in `async_setup` because we need to
+    group old per-device entries across the whole domain. Returning True here
+    lets HA proceed to set up the entry normally; if it's still v<3 at this
+    point, the global migrator already logged and refused to convert it
+    (leaving the entry valid-but-untouched so a future run can retry).
+    """
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up mqtt_flespi_message from a config entry."""
-    _migrate_legacy_entity(hass, entry.data["dev_id"])
+    """Set up a connection main entry and all its device subentries."""
+    if entry.version < 3:
+        _LOGGER.warning(
+            "Entry %s is still on version %d; waiting for migration on next restart",
+            entry.entry_id,
+            entry.version,
+        )
+        return False
 
-    coordinator = FlespiCoordinator(hass, entry)
-    await coordinator.async_prepare()
-    await coordinator.async_start()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    per_subentry: dict[str, FlespiCoordinator] = {}
+    domain_data[entry.entry_id] = per_subentry
+
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type != SUBENTRY_TYPE_DEVICE:
+            continue
+        _migrate_legacy_tracker_entity(hass, subentry.data[CONF_DEV_ID])
+        coord = FlespiCoordinator(hass, entry, subentry)
+        try:
+            await coord.async_prepare()
+            await coord.async_start()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "Failed to start coordinator for device '%s'",
+                subentry.data.get(CONF_DEV_ID, subentry.subentry_id),
+            )
+            continue
+        per_subentry[subentry.subentry_id] = coord
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-def _migrate_legacy_entity(hass: HomeAssistant, dev_id: str) -> None:
-    """Remove legacy device_tracker entity to prevent entity_id conflicts.
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload the main entry: stop every subentry's coordinator + unload platforms."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        per_subentry: dict[str, FlespiCoordinator] = (
+            hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
+        )
+        for coord in per_subentry.values():
+            try:
+                await coord.async_stop()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Error stopping coordinator during unload")
+    return unload_ok
 
-    The old component used async_see() which creates legacy entities without
-    unique_id. The new TrackerEntity uses the same entity_id pattern
-    (device_tracker.{dev_id}) but with a unique_id. Remove the old entry
-    so the new one registers cleanly.
-    """
+
+def _migrate_legacy_tracker_entity(hass: HomeAssistant, dev_id: str) -> None:
+    """Remove the old no-unique_id device_tracker entity from pre-config-flow days."""
     ent_reg = er.async_get(hass)
     entity_id = f"device_tracker.{dev_id}"
     existing = ent_reg.async_get(entity_id)
@@ -65,11 +120,153 @@ def _migrate_legacy_entity(hass: HomeAssistant, dev_id: str) -> None:
         ent_reg.async_remove(entity_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    coordinator: FlespiCoordinator = hass.data[DOMAIN][entry.entry_id]
-    await coordinator.async_stop()
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return unload_ok
+# =============================================================================
+# v<3 → v3 migration (global, runs in async_setup before any entry loads)
+# =============================================================================
+
+
+def _conn_key(entry: ConfigEntry) -> tuple:
+    """Stable tuple identifying the connection for grouping purposes."""
+    mode = entry.data.get(CONF_MODE, MODE_HA_MQTT)
+    if mode == MODE_HA_MQTT:
+        return ("ha_mqtt",)
+    return (
+        "direct",
+        entry.data.get(CONF_HOST, DEFAULT_HOST),
+        entry.data.get(CONF_PORT, DEFAULT_PORT_TLS),
+        bool(entry.data.get(CONF_USE_TLS, True)),
+        entry.data.get(CONF_PROTOCOL, DEFAULT_PROTOCOL),
+        entry.data.get(CONF_TOKEN, ""),
+    )
+
+
+def _main_unique_id_for_key(key: tuple) -> str:
+    if key[0] == "ha_mqtt":
+        return "ha_mqtt"
+    _, host, port, use_tls, protocol, token = key
+    raw = f"{host}|{port}|{int(use_tls)}|{protocol}|{token}"
+    return f"direct:{hashlib.sha1(raw.encode()).hexdigest()[:12]}"
+
+
+def _main_data_for_key(key: tuple) -> dict[str, Any]:
+    if key[0] == "ha_mqtt":
+        return {CONF_MODE: MODE_HA_MQTT}
+    _, host, port, use_tls, protocol, token = key
+    return {
+        CONF_MODE: MODE_DIRECT,
+        CONF_TOKEN: token,
+        CONF_HOST: host,
+        CONF_PORT: port,
+        CONF_USE_TLS: use_tls,
+        CONF_PROTOCOL: protocol,
+    }
+
+
+def _main_title_for_key(key: tuple) -> str:
+    if key[0] == "ha_mqtt":
+        return "Flespi (via Home Assistant MQTT)"
+    return f"Flespi ({key[1]})"
+
+
+def _subentry_data_from_legacy(entry: ConfigEntry) -> ConfigSubentryData:
+    dev_id = entry.data.get(CONF_DEV_ID) or entry.data.get("dev_id")
+    topic = entry.data.get(CONF_TOPIC) or entry.data.get("topic")
+    auto_discovery = bool(entry.data.get(CONF_AUTO_DISCOVERY, False))
+    return ConfigSubentryData(
+        subentry_type=SUBENTRY_TYPE_DEVICE,
+        title=dev_id,
+        unique_id=dev_id,
+        data={
+            CONF_DEV_ID: dev_id,
+            CONF_TOPIC: topic,
+            CONF_AUTO_DISCOVERY: auto_discovery,
+        },
+    )
+
+
+def _find_main_entry(hass: HomeAssistant, unique_id: str) -> ConfigEntry | None:
+    for candidate in hass.config_entries.async_entries(DOMAIN):
+        if candidate.version >= 3 and candidate.unique_id == unique_id:
+            return candidate
+    return None
+
+
+async def _migrate_legacy_entries(hass: HomeAssistant) -> None:
+    """Scan for v<3 entries, group by connection, convert each group to v3.
+
+    Paranoid ordering: the new main entry (or its appended subentry) is created
+    BEFORE the corresponding old entry is removed. Any exception in a group
+    leaves that group's old entries intact so the migration retries next startup.
+    """
+    legacy: list[ConfigEntry] = [
+        e for e in hass.config_entries.async_entries(DOMAIN) if e.version < 3
+    ]
+    if not legacy:
+        return
+
+    _LOGGER.info("Migrating %d legacy config entries to subentry model", len(legacy))
+
+    # Group by conn key so all devices on the same connection end up under one
+    # main entry. Preserve ordering to keep logs deterministic.
+    groups: dict[tuple, list[ConfigEntry]] = {}
+    for old in legacy:
+        groups.setdefault(_conn_key(old), []).append(old)
+
+    for key, entries in groups.items():
+        try:
+            await _migrate_group(hass, key, entries)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "Migration failed for group %s — leaving %d entries untouched",
+                key,
+                len(entries),
+            )
+
+
+async def _migrate_group(
+    hass: HomeAssistant, key: tuple, entries: list[ConfigEntry]
+) -> None:
+    unique_id = _main_unique_id_for_key(key)
+    subentries_data = [_subentry_data_from_legacy(e) for e in entries]
+    main_entry = _find_main_entry(hass, unique_id)
+
+    if main_entry is None:
+        # No existing v3 main entry for this connection — create one via the
+        # import flow with all subentries in a single atomic step.
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                "__migrate__": True,
+                "main_unique_id": unique_id,
+                "main_title": _main_title_for_key(key),
+                "main_data": _main_data_for_key(key),
+                "subentries_data": subentries_data,
+            },
+        )
+        if result["type"] != "create_entry":
+            raise RuntimeError(f"Migration import flow returned {result}")
+    else:
+        # Main entry already exists — append subentries (may happen if the user
+        # had a v3 install and also some v<3 entries lying around). The
+        # async_add_subentry API takes a fully-formed ConfigSubentry; we
+        # construct it from our ConfigSubentryData dicts. subentry_id is
+        # generated automatically by ConfigSubentry's default_factory.
+        for sub_data in subentries_data:
+            subentry = ConfigSubentry(
+                subentry_type=sub_data["subentry_type"],
+                title=sub_data["title"],
+                unique_id=sub_data.get("unique_id"),
+                data=MappingProxyType(dict(sub_data["data"])),
+            )
+            hass.config_entries.async_add_subentry(main_entry, subentry)
+
+    # Only after the new main entry/subentries exist do we drop the legacy ones.
+    for old in entries:
+        await hass.config_entries.async_remove(old.entry_id)
+
+    _LOGGER.info(
+        "Migrated %d device(s) into connection '%s'",
+        len(entries),
+        _main_title_for_key(key),
+    )

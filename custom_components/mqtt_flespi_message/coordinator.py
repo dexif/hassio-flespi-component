@@ -9,10 +9,8 @@ import re
 import time
 from typing import Any, Awaitable, Callable
 
-import paho.mqtt.client as mqtt_client
-
 from homeassistant.components import mqtt
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant, callback
 
 from .api import FlespiApiError, FlespiRestClient
@@ -44,21 +42,13 @@ from .const import (
     DEFAULT_STALE_THRESHOLD_S,
     DOMAIN,
     MODE_DIRECT,
-    PROTOCOL_V31,
-    PROTOCOL_V311,
-    PROTOCOL_V5,
 )
 from .entity import (
     LEGACY_SENSOR_SPECS,
     FlespiEntitySpec,
     build_sensor_specs,
 )
-
-_PROTOCOL_MAP: dict[str, int] = {
-    PROTOCOL_V31: mqtt_client.MQTTv31,
-    PROTOCOL_V311: mqtt_client.MQTTv311,
-    PROTOCOL_V5: mqtt_client.MQTTv5,
-}
+from .pool import ConnectionKey, FlespiDirectClient, get_pool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,40 +66,28 @@ _ALT_KEY_MAP: dict[str, str] = {
 }
 
 
-def build_direct_client(
-    client_id: str,
-    token: str,
-    use_tls: bool,
-    protocol: str = DEFAULT_PROTOCOL,
-) -> mqtt_client.Client:
-    """Create a paho MQTT client configured for flespi direct mode."""
-    paho_protocol = _PROTOCOL_MAP[protocol]
-    kwargs: dict[str, Any] = {
-        "callback_api_version": mqtt_client.CallbackAPIVersion.VERSION2,
-        "client_id": client_id,
-        "protocol": paho_protocol,
-    }
-    # clean_session is only accepted for MQTTv3; MQTTv5 uses clean_start on connect.
-    if paho_protocol != mqtt_client.MQTTv5:
-        kwargs["clean_session"] = True
-    client = mqtt_client.Client(**kwargs)
-    client.username_pw_set(token, "")
-    if use_tls:
-        client.tls_set()
-    return client
-
-
 class FlespiCoordinator:
-    """Coordinate MQTT subscription and data updates for a flespi device."""
+    """Coordinate MQTT subscription and data updates for a single flespi device.
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    Creds come from the main ConfigEntry (shared across all devices that use the
+    same connection); device-level data (dev_id, topic, auto_discovery) comes
+    from the ConfigSubentry.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        main_entry: ConfigEntry,
+        subentry: ConfigSubentry,
+    ) -> None:
         """Initialize the coordinator."""
         self.hass = hass
-        self.entry = entry
-        self.dev_id: str = entry.data["dev_id"]
-        self.topic: str = entry.data["topic"]
-        self.mode: str = entry.data[CONF_MODE]
-        self.auto_discovery: bool = entry.data.get(CONF_AUTO_DISCOVERY, False)
+        self.main_entry = main_entry
+        self.subentry = subentry
+        self.dev_id: str = subentry.data["dev_id"]
+        self.topic: str = subentry.data["topic"]
+        self.mode: str = main_entry.data[CONF_MODE]
+        self.auto_discovery: bool = subentry.data.get(CONF_AUTO_DISCOVERY, False)
         self.stale_threshold_s: int = DEFAULT_STALE_THRESHOLD_S
         self.flespi_device_id: int | None = _parse_device_id(self.topic)
         self.data: dict[str, Any] = {}
@@ -148,7 +126,7 @@ class FlespiCoordinator:
             )
             return
 
-        token = self.entry.data[CONF_TOKEN]
+        token = self.main_entry.data[CONF_TOKEN]
         client = FlespiRestClient(self.hass, token)
         try:
             telemetry, params_meta = await asyncio.gather(
@@ -182,9 +160,9 @@ class FlespiCoordinator:
 
         # Seed self.data so entities show current values immediately on startup.
         initial: dict[str, Any] = {}
-        for key, entry in telemetry.items():
-            if isinstance(entry, dict) and "value" in entry:
-                initial[key] = entry["value"]
+        for key, snapshot in telemetry.items():
+            if isinstance(snapshot, dict) and "value" in snapshot:
+                initial[key] = snapshot["value"]
         if initial:
             self.data = initial
 
@@ -200,78 +178,54 @@ class FlespiCoordinator:
         return teardown
 
     async def _start_direct(self) -> Callable[[], Awaitable[None]]:
-        """Subscribe via a dedicated paho client connected to flespi."""
-        data = self.entry.data
-        token: str = data[CONF_TOKEN]
-        host: str = data.get(CONF_HOST, DEFAULT_HOST)
-        port: int = data.get(CONF_PORT, DEFAULT_PORT_TLS)
-        use_tls: bool = data.get(CONF_USE_TLS, True)
-        protocol: str = data.get(CONF_PROTOCOL, DEFAULT_PROTOCOL)
+        """Subscribe via the shared flespi MQTT client pool.
 
-        client_id = f"ha-{DOMAIN}-{self.dev_id}"
-        client = build_direct_client(client_id, token, use_tls, protocol)
+        Multiple coordinators sharing the same (host, port, tls, protocol, token)
+        end up on the same TCP/TLS session. The pool handles connect/disconnect
+        and re-subscribes on reconnect; this method only registers topic-level
+        callbacks and returns a teardown that unregisters them.
+        """
+        data = self.main_entry.data
+        key: ConnectionKey = (
+            data.get(CONF_HOST, DEFAULT_HOST),
+            data.get(CONF_PORT, DEFAULT_PORT_TLS),
+            data.get(CONF_USE_TLS, True),
+            data.get(CONF_PROTOCOL, DEFAULT_PROTOCOL),
+            data[CONF_TOKEN],
+        )
+        pool = get_pool(self.hass)
+        pool_client: FlespiDirectClient = await pool.acquire(key)
 
-        subscriptions: list[tuple[str, int]] = [(self.topic, 0)]
-        connected_topic: str | None = None
-        telemetry_state_prefix: str | None = None
+        unsubs: list[Callable[[], None]] = []
+
+        def _main_cb(topic: str, payload: bytes) -> None:
+            self._process_payload(payload)
+
+        unsubs.append(pool_client.subscribe(self.topic, _main_cb))
+
         if self.flespi_device_id is not None:
             connected_topic = (
                 f"flespi/state/gw/devices/{self.flespi_device_id}/connected"
             )
-            telemetry_state_prefix = (
+            telemetry_prefix = (
                 f"flespi/state/gw/devices/{self.flespi_device_id}/telemetry/"
             )
-            subscriptions.append((connected_topic, 0))
-            subscriptions.append((f"{telemetry_state_prefix}#", 0))
 
-        def _on_connect(c, userdata, flags, reason_code, properties) -> None:
-            if reason_code.is_failure:
-                _LOGGER.error(
-                    "Flespi MQTT connect failed for %s: %s",
-                    self.dev_id,
-                    reason_code,
-                )
-                return
-            c.subscribe(subscriptions)
+            def _connected_cb(topic: str, payload: bytes) -> None:
+                self._process_connected(payload)
 
-        def _on_message(c, userdata, message) -> None:
-            topic = message.topic
-            if connected_topic is not None and topic == connected_topic:
-                self.hass.loop.call_soon_threadsafe(
-                    self._process_connected, message.payload
-                )
-            elif (
-                telemetry_state_prefix is not None
-                and topic.startswith(telemetry_state_prefix)
-            ):
-                key = topic[len(telemetry_state_prefix):]
-                self.hass.loop.call_soon_threadsafe(
-                    self._process_state_param, key, message.payload
-                )
-            else:
-                self.hass.loop.call_soon_threadsafe(
-                    self._process_payload, message.payload
-                )
+            def _state_cb(topic: str, payload: bytes) -> None:
+                if topic.startswith(telemetry_prefix):
+                    param_key = topic[len(telemetry_prefix):]
+                    self._process_state_param(param_key, payload)
 
-        def _on_disconnect(c, userdata, flags, reason_code, properties) -> None:
-            if reason_code != 0:
-                _LOGGER.warning(
-                    "Flespi MQTT disconnected from %s: %s", host, reason_code
-                )
-
-        client.on_connect = _on_connect
-        client.on_message = _on_message
-        client.on_disconnect = _on_disconnect
-        client.reconnect_delay_set(min_delay=1, max_delay=60)
-        client.connect_async(host, port, keepalive=60)
-        client.loop_start()
+            unsubs.append(pool_client.subscribe(connected_topic, _connected_cb))
+            unsubs.append(pool_client.subscribe(f"{telemetry_prefix}#", _state_cb))
 
         async def teardown() -> None:
-            def _stop() -> None:
-                client.disconnect()
-                client.loop_stop()
-
-            await self.hass.async_add_executor_job(_stop)
+            for unsub in unsubs:
+                unsub()
+            await pool.release(pool_client)
 
         return teardown
 

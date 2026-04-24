@@ -19,10 +19,13 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: FlespiCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        FlespiSensor(coordinator, spec) for spec in coordinator.sensor_specs
-    )
+    per_subentry: dict[str, FlespiCoordinator] = hass.data[DOMAIN][entry.entry_id]
+    for subentry_id, coordinator in per_subentry.items():
+        entities = [
+            FlespiSensor(coordinator, spec) for spec in coordinator.sensor_specs
+        ]
+        if entities:
+            async_add_entities(entities, config_subentry_id=subentry_id)
 
 
 class FlespiSensor(FlespiEntity, SensorEntity):
