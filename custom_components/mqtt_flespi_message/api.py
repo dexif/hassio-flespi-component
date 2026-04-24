@@ -74,10 +74,11 @@ class FlespiRestClient:
     async def get_device_telemetry(self, device_id: int) -> dict[str, Any]:
         """Return the latest telemetry snapshot for a device.
 
-        Response result is a list with a single object whose `telemetry` field
-        maps parameter names to {value, ts} pairs.
+        The flespi sub-resource requires a field-selector after `/telemetry/`;
+        `/all` returns every parameter. Response result is a list with a single
+        object whose `telemetry` field maps parameter names to {value, ts} pairs.
         """
-        result = await self._get(f"/gw/devices/{device_id}/telemetry")
+        result = await self._get(f"/gw/devices/{device_id}/telemetry/all")
         if not result:
             return {}
         telemetry = result[0].get("telemetry") or {}
