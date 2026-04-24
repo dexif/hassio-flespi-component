@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 from urllib.parse import quote
@@ -37,20 +38,35 @@ class FlespiRestClient:
         url = f"{self._base_url}{path}"
         try:
             async with self._session.get(
-                url, headers=self._headers, params=params, timeout=aiohttp.ClientTimeout(total=15)
+                url,
+                headers=self._headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
-                body = await resp.json(content_type=None)
-                if resp.status >= 400:
-                    errors = body.get("errors") if isinstance(body, dict) else None
-                    raise FlespiApiError(
-                        f"flespi GET {path} -> HTTP {resp.status}: {errors or body}"
-                    )
-                result = body.get("result") if isinstance(body, dict) else None
-                if not isinstance(result, list):
-                    raise FlespiApiError(f"Unexpected response shape from {path}: {body}")
-                return result
+                text = await resp.text()
         except aiohttp.ClientError as err:
             raise FlespiApiError(f"flespi GET {path} network error: {err}") from err
+
+        try:
+            body = json.loads(text)
+        except (ValueError, TypeError) as err:
+            preview = text[:300] if text else "<empty>"
+            raise FlespiApiError(
+                f"flespi GET {path} -> HTTP {resp.status}: "
+                f"malformed JSON ({err}); body preview: {preview!r}"
+            ) from err
+
+        if resp.status >= 400:
+            errors = body.get("errors") if isinstance(body, dict) else None
+            raise FlespiApiError(
+                f"flespi GET {path} -> HTTP {resp.status}: {errors or body}"
+            )
+        result = body.get("result") if isinstance(body, dict) else None
+        if not isinstance(result, list):
+            raise FlespiApiError(
+                f"Unexpected response shape from {path}: {str(body)[:300]}"
+            )
+        return result
 
     async def get_device_telemetry(self, device_id: int) -> dict[str, Any]:
         """Return the latest telemetry snapshot for a device.
