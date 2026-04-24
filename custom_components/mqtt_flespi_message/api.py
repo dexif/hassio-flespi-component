@@ -87,14 +87,12 @@ class FlespiRestClient:
     async def get_message_parameters(self) -> dict[str, dict[str, Any]]:
         """Return the message-parameter dictionary keyed by parameter name.
 
-        flespi exposes `name`, `units`, and `type` on this endpoint. There is
-        no `description` field, so human-readable sensor names fall back to
-        slug-derived labels via entity._derive_name.
+        The `fields` filter on this endpoint is very restrictive, so we pull
+        whatever flespi returns and extract what we need from each record
+        (name/units/type). Missing fields just degrade to slug-derived names
+        and no device_class inference.
         """
-        result = await self._get(
-            "/gw/message-parameters/all",
-            fields="name,units,type",
-        )
+        result = await self._get("/gw/message-parameters/all")
         return {item["name"]: item for item in result if "name" in item}
 
     async def search_devices(
