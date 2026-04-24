@@ -1,84 +1,17 @@
-"""Sensor platform for mqtt_flespi_message."""
+"""Sensor platform for mqtt_flespi_message (spec-driven, auto-discovery aware)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorEntityDescription,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    DEGREE,
-    UnitOfElectricPotential,
-    UnitOfLength,
-    UnitOfSpeed,
-)
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    ATTR_BATTERY_VOLTAGE,
-    ATTR_POSITION_ALTITUDE,
-    ATTR_POSITION_DIRECTION,
-    ATTR_POSITION_SATELLITES,
-    ATTR_POSITION_SPEED,
-    DOMAIN,
-)
+from .const import DOMAIN
 from .coordinator import FlespiCoordinator
-
-
-@dataclass(frozen=True, kw_only=True)
-class FlespiSensorEntityDescription(SensorEntityDescription):
-    """Describe a flespi sensor."""
-
-    flespi_key: str
-
-
-SENSOR_DESCRIPTIONS: tuple[FlespiSensorEntityDescription, ...] = (
-    FlespiSensorEntityDescription(
-        key="speed",
-        translation_key="speed",
-        flespi_key=ATTR_POSITION_SPEED,
-        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
-        device_class=SensorDeviceClass.SPEED,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    FlespiSensorEntityDescription(
-        key="altitude",
-        translation_key="altitude",
-        flespi_key=ATTR_POSITION_ALTITUDE,
-        native_unit_of_measurement=UnitOfLength.METERS,
-        device_class=SensorDeviceClass.DISTANCE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    FlespiSensorEntityDescription(
-        key="direction",
-        translation_key="direction",
-        flespi_key=ATTR_POSITION_DIRECTION,
-        native_unit_of_measurement=DEGREE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    FlespiSensorEntityDescription(
-        key="satellites",
-        translation_key="satellites",
-        flespi_key=ATTR_POSITION_SATELLITES,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    FlespiSensorEntityDescription(
-        key="battery_voltage",
-        translation_key="battery_voltage",
-        flespi_key=ATTR_BATTERY_VOLTAGE,
-        native_unit_of_measurement=UnitOfElectricPotential.MILLIVOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-)
+from .entity import FlespiEntity, FlespiEntitySpec
 
 
 async def async_setup_entry(
@@ -86,50 +19,33 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up flespi sensors from a config entry."""
     coordinator: FlespiCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        FlespiSensor(coordinator, description)
-        for description in SENSOR_DESCRIPTIONS
+        FlespiSensor(coordinator, spec) for spec in coordinator.sensor_specs
     )
 
 
-class FlespiSensor(SensorEntity):
-    """Represent a flespi telemetry sensor."""
-
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-    entity_description: FlespiSensorEntityDescription
+class FlespiSensor(FlespiEntity, SensorEntity):
+    """A sensor fed by a single flespi parameter key."""
 
     def __init__(
-        self,
-        coordinator: FlespiCoordinator,
-        description: FlespiSensorEntityDescription,
+        self, coordinator: FlespiCoordinator, spec: FlespiEntitySpec
     ) -> None:
-        """Initialize the sensor."""
-        self._coordinator = coordinator
-        self.entity_description = description
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.dev_id}_{description.key}"
+        super().__init__(coordinator, spec.unique_suffix)
+        self._flespi_key = spec.flespi_key
+        if spec.translation_key is not None:
+            self._attr_translation_key = spec.translation_key
+        elif spec.name is not None:
+            self._attr_name = spec.name
+        if spec.device_class is not None:
+            self._attr_device_class = spec.device_class
+        if spec.state_class is not None:
+            self._attr_state_class = spec.state_class
+        if spec.unit is not None:
+            self._attr_native_unit_of_measurement = spec.unit
+        if spec.icon is not None:
+            self._attr_icon = spec.icon
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._coordinator.dev_id)},
-            name=self._coordinator.dev_id,
-            manufacturer="Flespi",
-        )
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the sensor value."""
-        return self._coordinator.data.get(self.entity_description.flespi_key)
-
-    async def async_added_to_hass(self) -> None:
-        """Register for data updates when added to hass."""
-        self._coordinator.async_add_listener(self._handle_update)
-
-    @callback
-    def _handle_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        self.async_write_ha_state()
+    def native_value(self) -> Any:
+        return self._coordinator.data.get(self._flespi_key)

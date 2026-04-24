@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, PLATFORMS
+from .const import CONF_AUTO_DISCOVERY, CONF_MODE, DOMAIN, MODE_HA_MQTT, PLATFORMS
 from .coordinator import FlespiCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,11 +20,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate a config entry from an older schema version."""
+    if entry.version == 1:
+        # v1 predates both the mode selector and auto-discovery. Stamp the
+        # legacy behavior explicitly so runtime code can trust both fields.
+        new_data = {
+            **entry.data,
+            CONF_MODE: MODE_HA_MQTT,
+            CONF_AUTO_DISCOVERY: False,
+        }
+        hass.config_entries.async_update_entry(entry, data=new_data, version=2)
+        _LOGGER.info("Migrated %s from v1 to v2", entry.entry_id)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up mqtt_flespi_message from a config entry."""
     _migrate_legacy_entity(hass, entry.data["dev_id"])
 
     coordinator = FlespiCoordinator(hass, entry)
+    await coordinator.async_prepare()
     await coordinator.async_start()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

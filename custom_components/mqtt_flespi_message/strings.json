@@ -3,29 +3,113 @@
     "step": {
       "user": {
         "title": "Add Flespi Device",
+        "description": "Choose how Home Assistant should receive data for this device.",
+        "menu_options": {
+          "ha_mqtt": "Via Home Assistant MQTT (requires a flespi → local broker bridge)",
+          "direct": "Direct connection to the flespi MQTT broker"
+        }
+      },
+      "ha_mqtt": {
+        "title": "Flespi device via HA MQTT",
         "data": {
           "dev_id": "Device name",
           "topic": "MQTT topic"
         },
         "data_description": {
           "dev_id": "A unique name for this tracker (e.g. my_car)",
-          "topic": "The flespi MQTT topic to subscribe to"
+          "topic": "The MQTT topic to subscribe to on the local HA broker"
+        }
+      },
+      "direct": {
+        "title": "Direct connection to flespi",
+        "description": "Pick the device from your flespi account or enter its identifier by hand.",
+        "menu_options": {
+          "direct_search": "Search my flespi account",
+          "direct_manual": "Enter device ID manually"
+        }
+      },
+      "direct_search": {
+        "title": "Find a flespi device",
+        "description": "Enter your token and a name or ident substring. flespi runs the search server-side, so this scales to large accounts (up to 50 matches shown).",
+        "data": {
+          "token": "Flespi token",
+          "search": "Search (name or ident)",
+          "host": "Broker host",
+          "port": "Broker port",
+          "use_tls": "Use TLS",
+          "protocol": "MQTT protocol version",
+          "auto_discovery": "Auto-discover sensors"
+        },
+        "data_description": {
+          "token": "A flespi token with at least read access to the target device(s)",
+          "search": "Part of the device name or ident (IMEI). Narrow the query if you have many devices.",
+          "host": "Usually mqtt.flespi.io",
+          "port": "8883 for TLS, 1883 for plain TCP",
+          "use_tls": "Recommended. Disable only if you know what you are doing.",
+          "protocol": "MQTT 5 is recommended; use 3.1.1 or 3.1 for legacy compatibility.",
+          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor for every recently-reporting parameter."
+        }
+      },
+      "direct_pick": {
+        "title": "Pick a device",
+        "description": "Found {count} matching device(s).",
+        "data": {
+          "device": "Device"
+        }
+      },
+      "direct_manual": {
+        "title": "Direct connection to flespi (manual)",
+        "data": {
+          "dev_id": "Device name",
+          "token": "Flespi token",
+          "topic": "MQTT topic",
+          "host": "Broker host",
+          "port": "Broker port",
+          "use_tls": "Use TLS",
+          "protocol": "MQTT protocol version",
+          "auto_discovery": "Auto-discover sensors"
+        },
+        "data_description": {
+          "dev_id": "A unique name for this tracker (e.g. my_car)",
+          "token": "A flespi token with access to the relevant device(s)",
+          "topic": "Topic to subscribe to on the flespi broker (e.g. flespi/message/gw/devices/12345/#)",
+          "host": "Usually mqtt.flespi.io",
+          "port": "8883 for TLS, 1883 for plain TCP",
+          "use_tls": "Recommended. Disable only if you know what you are doing.",
+          "protocol": "MQTT 5 is recommended; use 3.1.1 or 3.1 for legacy compatibility.",
+          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor for every recently-reporting parameter. Turn off to keep only the built-in speed/altitude/etc. sensors."
         }
       },
       "reconfigure": {
         "title": "Reconfigure Flespi Device",
         "data": {
           "dev_id": "Device name",
-          "topic": "MQTT topic"
+          "token": "Flespi token",
+          "topic": "MQTT topic",
+          "host": "Broker host",
+          "port": "Broker port",
+          "use_tls": "Use TLS",
+          "protocol": "MQTT protocol version",
+          "auto_discovery": "Auto-discover sensors"
         },
         "data_description": {
           "dev_id": "A unique name for this tracker (e.g. my_car)",
-          "topic": "The flespi MQTT topic to subscribe to"
+          "token": "A flespi token with access to the relevant device(s)",
+          "topic": "The MQTT topic to subscribe to",
+          "host": "Usually mqtt.flespi.io",
+          "port": "8883 for TLS, 1883 for plain TCP",
+          "use_tls": "Recommended. Disable only if you know what you are doing.",
+          "protocol": "MQTT 5 is recommended; use 3.1.1 or 3.1 for legacy compatibility.",
+          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor for every recently-reporting parameter. Turn off to keep only the built-in speed/altitude/etc. sensors."
         }
       }
     },
     "error": {
-      "invalid_topic": "The MQTT topic format is invalid"
+      "invalid_topic": "The MQTT topic format is invalid",
+      "invalid_auth": "Flespi rejected the token. Check that it is valid and has access to the device.",
+      "cannot_connect": "Unable to reach the flespi broker. Check host, port, and network.",
+      "no_matches": "No devices matched. Refine your search.",
+      "max_limit": "Result list truncated at 50 entries. Narrow the search to see more."
     },
     "abort": {
       "already_configured": "This device is already configured"
@@ -38,6 +122,11 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      }
+    },
     "sensor": {
       "speed": {
         "name": "Speed"

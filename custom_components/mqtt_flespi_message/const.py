@@ -3,7 +3,38 @@
 from homeassistant.const import Platform
 
 DOMAIN = "mqtt_flespi_message"
-PLATFORMS = [Platform.DEVICE_TRACKER, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER, Platform.SENSOR]
+
+# Connection modes
+CONF_MODE = "mode"
+MODE_HA_MQTT = "ha_mqtt"
+MODE_DIRECT = "direct"
+
+# Direct-mode config keys
+CONF_TOKEN = "token"
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_USE_TLS = "use_tls"
+CONF_PROTOCOL = "protocol"
+
+# Direct-mode defaults
+DEFAULT_HOST = "mqtt.flespi.io"
+DEFAULT_PORT_TLS = 8883
+DEFAULT_PORT_PLAIN = 1883
+
+# MQTT protocol versions (stored as strings in entry.data)
+PROTOCOL_V31 = "3.1"
+PROTOCOL_V311 = "3.1.1"
+PROTOCOL_V5 = "5"
+PROTOCOL_CHOICES = [PROTOCOL_V31, PROTOCOL_V311, PROTOCOL_V5]
+DEFAULT_PROTOCOL = PROTOCOL_V5
+
+# Auto-discovery (direct mode only)
+CONF_AUTO_DISCOVERY = "auto_discovery"
+DEFAULT_STALE_THRESHOLD_S = 7 * 24 * 3600  # 7 days
+
+# REST API base URL (public flespi)
+FLESPI_REST_BASE_URL = "https://flespi.io"
 
 # Flespi message keys (flat dot-notation format)
 ATTR_POSITION_LATITUDE = "position.latitude"

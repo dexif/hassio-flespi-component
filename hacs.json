@@ -1,7 +1,7 @@
 {
   "name": "Mqtt flespi message",
-  "domains": ["device_tracker"],
-  "iot_class": "local_push",
+  "domains": ["binary_sensor", "device_tracker", "sensor"],
+  "iot_class": "cloud_push",
   "render_readme": true,
-  "version": "0.2.1"
+  "version": "0.3.0a1"
 }
