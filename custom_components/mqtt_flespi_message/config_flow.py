@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 import voluptuous as vol
 
+from homeassistant.components.mqtt import valid_subscribe_topic
 from homeassistant.config_entries import ConfigEntry, ConfigFlow
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.util import slugify
@@ -92,7 +93,11 @@ def _extend_direct_conn_fields(fields: dict[Any, Any], d) -> None:
 
 def _validate_topic(topic: str) -> str | None:
     """Return an error key if the topic is invalid, otherwise None."""
-    if not topic or "#" in topic:
+    if not topic:
+        return "invalid_topic"
+    try:
+        valid_subscribe_topic(topic)
+    except vol.Invalid:
         return "invalid_topic"
     return None
 
