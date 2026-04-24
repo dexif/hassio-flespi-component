@@ -85,10 +85,15 @@ class FlespiRestClient:
         return telemetry if isinstance(telemetry, dict) else {}
 
     async def get_message_parameters(self) -> dict[str, dict[str, Any]]:
-        """Return the message-parameter dictionary keyed by parameter name."""
+        """Return the message-parameter dictionary keyed by parameter name.
+
+        flespi exposes `name`, `units`, and `type` on this endpoint. There is
+        no `description` field, so human-readable sensor names fall back to
+        slug-derived labels via entity._derive_name.
+        """
         result = await self._get(
             "/gw/message-parameters/all",
-            fields="name,description,units,type",
+            fields="name,units,type",
         )
         return {item["name"]: item for item in result if "name" in item}
 
