@@ -235,8 +235,9 @@ def build_sensor_specs(
             continue
 
         meta = params_meta.get(key, {})
-        units = meta.get("units") or None
-        description = meta.get("description") or None
+        # flespi /gw/message-parameters fields: name, type, unit (singular!), info.
+        unit = meta.get("unit") or None
+        description = meta.get("info") or None
         param_type = (meta.get("type") or "").lower()
 
         is_bool = isinstance(value, bool) or param_type == "boolean"
@@ -258,9 +259,9 @@ def build_sensor_specs(
                     unique_suffix=unique_id_suffix(key),
                     name=None if LEGACY_TRANSLATION_KEYS.get(key) else (description or _derive_name(key)),
                     translation_key=LEGACY_TRANSLATION_KEYS.get(key),
-                    device_class=infer_sensor_device_class(key, units),
+                    device_class=infer_sensor_device_class(key, unit),
                     state_class=SensorStateClass.MEASUREMENT,
-                    unit=units,
+                    unit=unit,
                 )
             )
         # Strings and complex types are not exposed as entities.
