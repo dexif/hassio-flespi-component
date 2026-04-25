@@ -587,6 +587,24 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
         # (matches the convention of self._get_reconfigure_entry() on ConfigFlow).
         return self._get_entry()
 
+    @callback
+    def async_create_entry(self, **kwargs: Any) -> SubentryFlowResult:
+        """Create the subentry, then schedule a reload of the parent entry.
+
+        Without the reload, the new subentry sits in `entry.subentries` but no
+        coordinator / platform entities are created for it — async_setup_entry
+        only runs at initial entry setup, not on subentry add.
+        """
+        result = super().async_create_entry(**kwargs)
+        parent_id = self._entry_id
+        # call_soon defers the reload to the next event-loop tick, after HA's
+        # ConfigSubentryFlowManager has finished committing the new subentry
+        # via async_add_subentry. Otherwise we'd reload before it's persisted.
+        self.hass.loop.call_soon(
+            self.hass.config_entries.async_schedule_reload, parent_id
+        )
+        return result
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -726,7 +744,7 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
                         subentry.data.get(CONF_ENABLE_ALL_SENSORS, False),
                     ),
                 }
-                return self.async_update_and_abort(
+                return self.async_update_reload_and_abort(
                     entry,
                     subentry,
                     title=dev_id,
