@@ -48,6 +48,7 @@ class FlespiSensor(FlespiEntity, SensorEntity):
             self._attr_native_unit_of_measurement = spec.unit
         if spec.icon is not None:
             self._attr_icon = spec.icon
+        self._attr_entity_registry_enabled_default = spec.enabled_by_default
 
     @property
     def native_value(self) -> Any:

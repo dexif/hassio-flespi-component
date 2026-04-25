@@ -35,12 +35,14 @@
         "data": {
           "token": "Flespi token",
           "search": "Search (name or ident)",
-          "auto_discovery": "Auto-discover sensors"
+          "auto_discovery": "Auto-discover sensors",
+          "enable_all_sensors": "Enable all auto-discovered sensors"
         },
         "data_description": {
           "token": "A flespi token with at least read access to the target device(s)",
           "search": "Part of the device name or ident (IMEI)",
-          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor per recent parameter."
+          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor per recent parameter.",
+          "enable_all_sensors": "When off, only common sensors (speed, altitude, fuel, ignition, …) are enabled by default; the rest are added but disabled — enable per device from the entity list. Turn on to activate every auto-discovered sensor immediately."
         }
       },
       "direct_pick": {
@@ -57,13 +59,15 @@
           "token": "Flespi token",
           "dev_id": "Device name",
           "flespi_device_id": "Flespi device ID",
-          "auto_discovery": "Auto-discover sensors"
+          "auto_discovery": "Auto-discover sensors",
+          "enable_all_sensors": "Enable all auto-discovered sensors"
         },
         "data_description": {
           "token": "A flespi token with access to the target device(s)",
           "dev_id": "A unique name for this tracker (e.g. my_car)",
           "flespi_device_id": "Numeric device ID from the flespi panel (e.g. 5100080). The MQTT topic is built from this automatically.",
-          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor per recent parameter."
+          "auto_discovery": "Fetch the device's telemetry snapshot via REST and create a sensor/binary_sensor per recent parameter.",
+          "enable_all_sensors": "When off, only common sensors (speed, altitude, fuel, ignition, …) are enabled by default; the rest are added but disabled — enable per device from the entity list. Turn on to activate every auto-discovered sensor immediately."
         }
       },
       "reconfigure": {
@@ -103,13 +107,6 @@
             "manual": "Enter device ID manually"
           }
         },
-        "search": {
-          "title": "Find a flespi device",
-          "description": "Enter a name or ident substring.",
-          "data": {
-            "search": "Search (name or ident)"
-          }
-        },
         "pick": {
           "title": "Pick a device",
           "description": "Found {count} matching device(s).",
@@ -123,13 +120,26 @@
             "dev_id": "Device name",
             "flespi_device_id": "Flespi device ID",
             "topic": "MQTT topic",
-            "auto_discovery": "Auto-discover sensors"
+            "auto_discovery": "Auto-discover sensors",
+            "enable_all_sensors": "Enable all auto-discovered sensors"
           },
           "data_description": {
             "dev_id": "A unique name for this tracker (e.g. my_car)",
             "flespi_device_id": "Numeric device ID from the flespi panel (direct mode). The MQTT topic is built from this automatically.",
             "topic": "MQTT topic on the local HA broker (HA-MQTT mode)",
-            "auto_discovery": "Fetch the device's telemetry snapshot via REST and create sensors per recent parameter."
+            "auto_discovery": "Fetch the device's telemetry snapshot via REST and create sensors per recent parameter.",
+            "enable_all_sensors": "When off, only common sensors are enabled; the rest are added disabled — enable per device from the entity list."
+          }
+        },
+        "search": {
+          "title": "Find a flespi device",
+          "description": "Enter a name or ident substring.",
+          "data": {
+            "search": "Search (name or ident)",
+            "enable_all_sensors": "Enable all auto-discovered sensors"
+          },
+          "data_description": {
+            "enable_all_sensors": "When off, only common sensors are enabled; the rest are added disabled — enable per device from the entity list."
           }
         },
         "reconfigure": {
@@ -138,13 +148,15 @@
             "dev_id": "Device name",
             "flespi_device_id": "Flespi device ID",
             "topic": "MQTT topic",
-            "auto_discovery": "Auto-discover sensors"
+            "auto_discovery": "Auto-discover sensors",
+            "enable_all_sensors": "Enable all auto-discovered sensors"
           },
           "data_description": {
             "dev_id": "A unique name for this tracker",
             "flespi_device_id": "Numeric device ID from the flespi panel (direct mode)",
             "topic": "MQTT topic on the local HA broker (HA-MQTT mode)",
-            "auto_discovery": "Fetch telemetry via REST and create sensors per recent parameter."
+            "auto_discovery": "Fetch telemetry via REST and create sensors per recent parameter.",
+            "enable_all_sensors": "When off, only common sensors are enabled; the rest are added disabled — enable per device from the entity list."
           }
         }
       },

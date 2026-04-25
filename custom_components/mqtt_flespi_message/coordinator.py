@@ -30,6 +30,7 @@ from .const import (
     ATTR_POSITION_SATELLITES,
     ATTR_POSITION_SPEED,  # imports retained for _ALT_KEY_MAP
     CONF_AUTO_DISCOVERY,
+    CONF_ENABLE_ALL_SENSORS,
     CONF_HOST,
     CONF_MODE,
     CONF_PORT,
@@ -88,6 +89,7 @@ class FlespiCoordinator:
         self.topic: str = subentry.data["topic"]
         self.mode: str = main_entry.data[CONF_MODE]
         self.auto_discovery: bool = subentry.data.get(CONF_AUTO_DISCOVERY, False)
+        self.enable_all_sensors: bool = subentry.data.get(CONF_ENABLE_ALL_SENSORS, False)
         self.stale_threshold_s: int = DEFAULT_STALE_THRESHOLD_S
         self.flespi_device_id: int | None = _parse_device_id(self.topic)
         self.data: dict[str, Any] = {}
@@ -146,6 +148,7 @@ class FlespiCoordinator:
             params_meta,
             self.stale_threshold_s,
             time.time(),
+            enable_all=self.enable_all_sensors,
         )
         if not sensor_specs and not binary_specs:
             # Device has no fresh telemetry — keep legacy specs so the user

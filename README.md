@@ -79,7 +79,13 @@ Each configured device creates one HA device with:
   automations and Recorder history survive intact.
 - `binary_sensor.<dev_id>_online` — retained `connected` state from flespi (direct mode only).
 - Auto-discovered sensors and binary_sensors for every fresh telemetry parameter (direct mode +
-  auto-discovery enabled).
+  auto-discovery enabled). By default, only common parameters are enabled out of the box; the
+  rest are added but disabled — toggle them on per device from the entity list when you need them.
+
+**Enabled by default** (auto-discovery): the legacy five plus `fuel.level`, `engine.ignition.status`
+(and variants), `external.powersource.voltage`, `can.fuel.volume`, `can.fuel.level`. To activate
+every auto-discovered sensor at once, tick **Enable all auto-discovered sensors** when adding or
+reconfiguring a device.
 
 Auto-discovered entities get proper `device_class` / units where possible: battery level →
 `battery`, voltages → `voltage`, temperatures → `temperature`, ignition / movement / door / lock /
@@ -98,6 +104,15 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.4.2**
+  - Auto-discovered sensors are now added in two tiers: a curated set (legacy five plus
+    `fuel.level`, `engine.ignition.status`, `external.powersource.voltage`, `can.fuel.volume`,
+    `can.fuel.level`) is enabled by default; everything else is registered but disabled.
+  - New **Enable all auto-discovered sensors** toggle in the device form / reconfigure to flip
+    all auto-discovered entities on at once.
+- **0.4.1**
+  - Fixed `/gw/message-parameters` field names — auto-discovery now reads the correct `unit`
+    (singular) and `info` fields, so units and human-readable descriptions land on the entities.
 - **0.4.0**
   - Subentry model: one main entry per connection, one subentry per device. Add many devices under
     the same token without retyping credentials.

@@ -69,6 +69,7 @@ class FlespiBinarySensor(FlespiEntity, BinarySensorEntity):
             self._attr_device_class = spec.device_class
         if spec.icon is not None:
             self._attr_icon = spec.icon
+        self._attr_entity_registry_enabled_default = spec.enabled_by_default
 
     @property
     def is_on(self) -> bool | None:

@@ -40,6 +40,7 @@ from .api import FlespiApiError, FlespiRestClient
 from .const import (
     CONF_AUTO_DISCOVERY,
     CONF_DEV_ID,
+    CONF_ENABLE_ALL_SENSORS,
     CONF_FLESPI_DEVICE_ID,
     CONF_HOST,
     CONF_MODE,
@@ -132,6 +133,11 @@ def _device_schema(defaults: Mapping[str, Any], mode: str) -> vol.Schema:
         ] = int
         fields[
             vol.Optional(CONF_AUTO_DISCOVERY, default=d(CONF_AUTO_DISCOVERY, True))
+        ] = bool
+        fields[
+            vol.Optional(
+                CONF_ENABLE_ALL_SENSORS, default=d(CONF_ENABLE_ALL_SENSORS, False)
+            )
         ] = bool
     else:
         fields[vol.Required(CONF_TOPIC, default=d(CONF_TOPIC))] = str
@@ -226,7 +232,9 @@ def _format_device_label(device: Mapping[str, Any]) -> str:
 
 
 def _device_subentry_data_from_device(
-    device: Mapping[str, Any], auto_discovery: bool
+    device: Mapping[str, Any],
+    auto_discovery: bool,
+    enable_all_sensors: bool = False,
 ) -> dict[str, Any]:
     dev_id_raw = device.get("name") or ""
     device_id = device["id"]
@@ -235,6 +243,7 @@ def _device_subentry_data_from_device(
         CONF_DEV_ID: dev_id,
         CONF_TOPIC: f"flespi/message/gw/devices/{device_id}/#",
         CONF_AUTO_DISCOVERY: auto_discovery,
+        CONF_ENABLE_ALL_SENSORS: enable_all_sensors,
     }
 
 
@@ -253,6 +262,7 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
         # Transient state carried across search steps in direct mode.
         self._direct_token: str | None = None
         self._direct_auto_discovery: bool = True
+        self._direct_enable_all_sensors: bool = False
         self._direct_search_results: list[dict[str, Any]] = []
 
     @classmethod
@@ -342,6 +352,9 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_DEV_ID: user_input[CONF_DEV_ID],
                         CONF_TOPIC: topic,
                         CONF_AUTO_DISCOVERY: user_input.get(CONF_AUTO_DISCOVERY, True),
+                        CONF_ENABLE_ALL_SENSORS: user_input.get(
+                            CONF_ENABLE_ALL_SENSORS, False
+                        ),
                     },
                 )
                 return self.async_create_entry(
@@ -362,6 +375,10 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_AUTO_DISCOVERY,
                     default=(user_input or {}).get(CONF_AUTO_DISCOVERY, True),
                 ): bool,
+                vol.Optional(
+                    CONF_ENABLE_ALL_SENSORS,
+                    default=(user_input or {}).get(CONF_ENABLE_ALL_SENSORS, False),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="direct_manual", data_schema=schema, errors=errors)
@@ -373,6 +390,9 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             token = user_input[CONF_TOKEN]
             self._direct_auto_discovery = user_input.get(CONF_AUTO_DISCOVERY, True)
+            self._direct_enable_all_sensors = user_input.get(
+                CONF_ENABLE_ALL_SENSORS, False
+            )
             if err := await _test_direct_connection(self.hass, token):
                 errors["base"] = err
             else:
@@ -397,6 +417,10 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_AUTO_DISCOVERY,
                     default=(user_input or {}).get(CONF_AUTO_DISCOVERY, True),
                 ): bool,
+                vol.Optional(
+                    CONF_ENABLE_ALL_SENSORS,
+                    default=(user_input or {}).get(CONF_ENABLE_ALL_SENSORS, False),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="direct_search", data_schema=schema, errors=errors)
@@ -413,7 +437,9 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured")
 
             sub_data = _device_subentry_data_from_device(
-                device, self._direct_auto_discovery
+                device,
+                self._direct_auto_discovery,
+                self._direct_enable_all_sensors,
             )
             token = self._direct_token or ""
             uid = main_unique_id_direct(
@@ -554,6 +580,7 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
     def __init__(self) -> None:
         super().__init__()
         self._search_results: list[dict[str, Any]] = []
+        self._search_enable_all_sensors: bool = False
 
     def _main_entry(self) -> ConfigEntry:
         # ConfigSubentryFlow exposes the parent entry via self._get_entry() helper
@@ -591,6 +618,9 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
                     CONF_AUTO_DISCOVERY: user_input.get(
                         CONF_AUTO_DISCOVERY, False if mode == MODE_HA_MQTT else True
                     ),
+                    CONF_ENABLE_ALL_SENSORS: user_input.get(
+                        CONF_ENABLE_ALL_SENSORS, False
+                    ),
                 }
                 return self.async_create_entry(
                     title=dev_id,
@@ -611,6 +641,9 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             token = entry.data[CONF_TOKEN]
+            self._search_enable_all_sensors = user_input.get(
+                CONF_ENABLE_ALL_SENSORS, False
+            )
             try:
                 devices = await _search_devices(self.hass, token, user_input[_SEARCH])
             except FlespiApiError as err:
@@ -622,11 +655,16 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
                 else:
                     self._search_results = devices
                     return await self.async_step_pick()
-        return self.async_show_form(
-            step_id="search",
-            data_schema=_search_schema(user_input or {}),
-            errors=errors,
+        schema = vol.Schema(
+            {
+                vol.Required(_SEARCH, default=(user_input or {}).get(_SEARCH, vol.UNDEFINED)): str,
+                vol.Optional(
+                    CONF_ENABLE_ALL_SENSORS,
+                    default=(user_input or {}).get(CONF_ENABLE_ALL_SENSORS, False),
+                ): bool,
+            }
         )
+        return self.async_show_form(step_id="search", data_schema=schema, errors=errors)
 
     async def async_step_pick(
         self, user_input: dict[str, Any] | None = None
@@ -638,7 +676,11 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
             )
             if device is None:
                 return self.async_abort(reason="already_configured")
-            sub_data = _device_subentry_data_from_device(device, auto_discovery=True)
+            sub_data = _device_subentry_data_from_device(
+                device,
+                auto_discovery=True,
+                enable_all_sensors=self._search_enable_all_sensors,
+            )
             return self.async_create_entry(
                 title=sub_data[CONF_DEV_ID],
                 data=sub_data,
@@ -679,6 +721,10 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
                         CONF_AUTO_DISCOVERY,
                         subentry.data.get(CONF_AUTO_DISCOVERY, False),
                     ),
+                    CONF_ENABLE_ALL_SENSORS: user_input.get(
+                        CONF_ENABLE_ALL_SENSORS,
+                        subentry.data.get(CONF_ENABLE_ALL_SENSORS, False),
+                    ),
                 }
                 return self.async_update_and_abort(
                     entry,
@@ -693,6 +739,9 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
         if not defaults:
             defaults[CONF_DEV_ID] = subentry.data.get(CONF_DEV_ID)
             defaults[CONF_AUTO_DISCOVERY] = subentry.data.get(CONF_AUTO_DISCOVERY, False)
+            defaults[CONF_ENABLE_ALL_SENSORS] = subentry.data.get(
+                CONF_ENABLE_ALL_SENSORS, False
+            )
             if mode == MODE_DIRECT:
                 defaults[CONF_FLESPI_DEVICE_ID] = _device_id_from_topic(
                     subentry.data.get(CONF_TOPIC, "")

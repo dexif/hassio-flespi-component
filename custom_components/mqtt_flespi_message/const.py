@@ -40,6 +40,10 @@ DEFAULT_PROTOCOL = PROTOCOL_V5
 
 # Auto-discovery (direct mode only)
 CONF_AUTO_DISCOVERY = "auto_discovery"
+# When False (default), only well-known parameters (speed, altitude, fuel, ignition, …)
+# are enabled out of the box; the rest are added to the entity registry but
+# disabled, so the user can enable just what they want.
+CONF_ENABLE_ALL_SENSORS = "enable_all_sensors"
 DEFAULT_STALE_THRESHOLD_S = 7 * 24 * 3600  # 7 days
 
 # REST API base URL (public flespi)

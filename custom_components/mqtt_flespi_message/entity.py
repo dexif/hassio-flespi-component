@@ -62,6 +62,31 @@ class FlespiEntitySpec:
     state_class: Any = None
     unit: str | None = None
     icon: str | None = None
+    enabled_by_default: bool = True
+
+
+# Auto-discovered telemetry parameters that should be enabled by default.
+# Anything else found in the snapshot is registered but disabled so the user
+# can pick what they want from Settings → Devices → entity list.
+DEFAULT_ENABLED_KEYS: frozenset[str] = frozenset(
+    {
+        # Legacy five — speed/altitude/direction/satellites/battery_voltage.
+        "position.speed",
+        "position.altitude",
+        "position.direction",
+        "position.satellites",
+        "battery.voltage",
+        # Common vehicle telemetry that practically every fleet user wants.
+        "fuel.level",
+        "engine.ignition.status",
+        "engine.ignition",
+        "ignition.status",
+        # External power + CAN-bus fuel readings.
+        "external.powersource.voltage",
+        "can.fuel.volume",
+        "can.fuel.level",
+    }
+)
 
 
 # Units flespi hands out that are compatible with a given HA sensor device_class.
@@ -215,6 +240,7 @@ def build_sensor_specs(
     params_meta: dict[str, dict[str, Any]],
     stale_threshold_s: int,
     now_ts: float,
+    enable_all: bool = False,
 ) -> tuple[list[FlespiEntitySpec], list[FlespiEntitySpec]]:
     """Split fresh telemetry params into (sensor_specs, binary_sensor_specs).
 
@@ -241,6 +267,7 @@ def build_sensor_specs(
         param_type = (meta.get("type") or "").lower()
 
         is_bool = isinstance(value, bool) or param_type == "boolean"
+        enabled = enable_all or key in DEFAULT_ENABLED_KEYS
 
         if is_bool:
             binary_specs.append(
@@ -250,6 +277,7 @@ def build_sensor_specs(
                     name=None if LEGACY_TRANSLATION_KEYS.get(key) else (description or _derive_name(key)),
                     translation_key=LEGACY_TRANSLATION_KEYS.get(key),
                     device_class=infer_binary_device_class(key),
+                    enabled_by_default=enabled,
                 )
             )
         elif isinstance(value, (int, float)) or param_type in ("number", "integer", "float"):
@@ -262,6 +290,7 @@ def build_sensor_specs(
                     device_class=infer_sensor_device_class(key, unit),
                     state_class=SensorStateClass.MEASUREMENT,
                     unit=unit,
+                    enabled_by_default=enabled,
                 )
             )
         # Strings and complex types are not exposed as entities.
