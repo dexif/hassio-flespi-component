@@ -104,6 +104,13 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.4.5**
+  - Dormant migration shim for the upcoming domain rename. Behavior is identical
+    to 0.4.4; no user action required. When the next release ships the new
+    `flespi` domain on disk, this shim activates automatically on the next HA
+    restart and migrates every existing entry over (config entries, entity
+    registry unique_id and platform, device registry identifiers), preserving
+    `entity_id`s and Recorder history.
 - **0.4.4**
   - Renamed the integration to **Flespi** (was "Mqtt flespi message"). Display-name change
     only — domain (`mqtt_flespi_message`) is unchanged in this release, so existing
