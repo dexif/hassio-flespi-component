@@ -1,7 +1,7 @@
-# mqtt flespi message (Home Assistant component)
+# Flespi (Home Assistant integration)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![license_badge](https://img.shields.io/github/license/dexif/hassio-flespi-component)](https://github.com/dexif/hassio-flespi-component/blob/master/LICENSE)
+[![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 Home Assistant integration for GPS trackers and telematics devices connected to [flespi](https://flespi.com/).
 One connection covers many devices; each device shows up as a standard HA device with GPS location on the map,
@@ -21,7 +21,7 @@ parameter the device reports.
 
 ### HACS (recommended)
 1. Add this repository as a custom repository in HACS (Integration type).
-2. Install "Mqtt flespi message".
+2. Install "Flespi".
 3. Restart Home Assistant.
 
 ### Manual
@@ -30,7 +30,7 @@ restart Home Assistant.
 
 ## Configuration
 
-**Settings → Devices & Services → Add Integration → Mqtt flespi message.**
+**Settings → Devices & Services → Add Integration → Flespi.**
 
 Starting with 0.4.0 the integration uses a *connection + subentries* model: one config entry
 represents the credentials (flespi token for direct mode, or the HA-MQTT placeholder), and each
@@ -104,6 +104,15 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.4.4**
+  - Renamed the integration to **Flespi** (was "Mqtt flespi message"). Display-name change
+    only — domain (`mqtt_flespi_message`) is unchanged in this release, so existing
+    configurations, entity IDs and Recorder history are unaffected.
+  - Repository moved to [`dexif/ha-flespi`](https://github.com/dexif/ha-flespi). GitHub
+    redirects the old URL automatically; HACS picks up the rename without manual action.
+  - Heads-up: the domain will change to `flespi` in an upcoming release (planned for 0.5.0).
+    The transition will include an automatic migration that preserves entity IDs and history,
+    same approach as the 0.4.0 subentry migration. No action required from users.
 - **0.4.2**
   - Auto-discovered sensors are now added in two tiers: a curated set (legacy five plus
     `fuel.level`, `engine.ignition.status`, `external.powersource.voltage`, `can.fuel.volume`,
