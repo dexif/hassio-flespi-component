@@ -130,6 +130,33 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.0**
+  - Domain rename: `mqtt_flespi_message` → `flespi`. The integration's display
+    name was already "Flespi" since 0.4.4; the internal domain now matches.
+  - Existing installs migrate automatically on the first restart after upgrade,
+    via the dormant shim shipped in 0.4.5: config entries, devices, entities,
+    and registry rows are re-parented to the new domain. `entity_id`s, Recorder
+    history, Lovelace cards, and automations continue to work unchanged.
+  - **Upgrading from 0.4.x requires a one-time HACS reinstall** — see the
+    upgrade box at the top of this README. HACS caches the integration's path
+    on first registration and doesn't re-scan it on update, so a normal HACS
+    update fails with `No manifest.json file found
+    'custom_components/mqtt_flespi_message/manifest.json'`. Workaround: ensure
+    0.4.5 has run, then remove and re-add the repo in HACS before installing
+    0.5.0.
+  - Removed the deprecated YAML platform import (`device_tracker:` `platform:
+    mqtt_flespi_message`). The `flespi:` YAML section never existed, so there
+    is nothing in the new domain for it to import.
+- **0.4.6**
+  - Direct mode: dropped the per-parameter `flespi/state/.../telemetry/#`
+    subscription. Per-param topics arrived as separate MQTT packets and caused
+    `position.latitude` / `position.longitude` updates to land out of sync,
+    producing a staircase trail on the map. Live updates now flow only through
+    the device-message topic, where all parameters are atomic.
+  - Initial values are seeded from the REST telemetry snapshot on startup —
+    unconditionally in direct mode, not just when auto-discovery is on — so
+    the device tracker and legacy sensors have values immediately on first
+    load.
 - **0.4.5**
   - Dormant migration shim for the upcoming domain rename. Behavior is identical
     to 0.4.4; no user action required. When the next release ships the new
