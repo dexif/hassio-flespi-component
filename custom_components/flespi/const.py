@@ -1,8 +1,8 @@
-"""Constants for the mqtt_flespi_message integration."""
+"""Constants for the flespi integration."""
 
 from homeassistant.const import Platform
 
-DOMAIN = "mqtt_flespi_message"
+DOMAIN = "flespi"
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.DEVICE_TRACKER, Platform.SENSOR]
 
 # Connection modes

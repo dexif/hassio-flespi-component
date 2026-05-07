@@ -1,4 +1,4 @@
-"""Sensor platform for mqtt_flespi_message (spec-driven, auto-discovery aware)."""
+"""Sensor platform for the flespi integration (spec-driven, auto-discovery aware)."""
 
 from __future__ import annotations
 

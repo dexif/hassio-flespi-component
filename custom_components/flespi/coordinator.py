@@ -1,4 +1,4 @@
-"""Coordinator for the mqtt_flespi_message integration."""
+"""Coordinator for the flespi integration."""
 
 from __future__ import annotations
 

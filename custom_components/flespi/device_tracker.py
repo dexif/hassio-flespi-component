@@ -1,27 +1,14 @@
-"""Device tracker platform for mqtt_flespi_message."""
+"""Device tracker platform for the flespi integration."""
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-import voluptuous as vol
-
-from homeassistant.components import mqtt
-from homeassistant.components.device_tracker import (
-    PLATFORM_SCHEMA as PARENT_PLATFORM_SCHEMA,
-    SourceType,
-    TrackerEntity,
-)
-from homeassistant.components.mqtt import CONF_QOS
-from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
-from homeassistant.const import CONF_DEVICES
+from homeassistant.components.device_tracker import SourceType, TrackerEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .const import (
     ATTR_BATTERY_LEVEL,
@@ -35,42 +22,6 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import FlespiCoordinator
-
-_LOGGER = logging.getLogger(__name__)
-
-# Legacy YAML platform schema (kept for backwards-compatible YAML import)
-PLATFORM_SCHEMA = PARENT_PLATFORM_SCHEMA.extend(mqtt.config.SCHEMA_BASE).extend(
-    {vol.Required(CONF_DEVICES): {cv.string: mqtt.valid_subscribe_topic}}
-)
-
-
-async def async_setup_scanner(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_see: Any,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> bool:
-    """Import YAML configuration into config entries."""
-    devices = config[CONF_DEVICES]
-    for dev_id, topic in devices.items():
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": SOURCE_IMPORT},
-                data={"dev_id": dev_id, "topic": topic},
-            )
-        )
-
-    async_create_issue(
-        hass,
-        DOMAIN,
-        "yaml_deprecated",
-        is_fixable=False,
-        severity=IssueSeverity.WARNING,
-        translation_key="yaml_deprecated",
-    )
-
-    return True
 
 
 async def async_setup_entry(

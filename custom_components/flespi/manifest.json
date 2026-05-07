@@ -1,5 +1,5 @@
 {
-  "domain": "mqtt_flespi_message",
+  "domain": "flespi",
   "name": "Flespi",
   "documentation": "https://flespi.com/blog/smart-home-with-a-human-touch-teaching-home-assistant-to-serve-you-coffee",
   "requirements": [],
@@ -9,5 +9,5 @@
   "codeowners": [],
   "config_flow": true,
   "iot_class": "cloud_push",
-  "version": "0.4.6"
+  "version": "0.5.0"
 }

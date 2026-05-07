@@ -170,12 +170,6 @@
       }
     }
   },
-  "issues": {
-    "yaml_deprecated": {
-      "title": "YAML configuration is deprecated",
-      "description": "Your mqtt_flespi_message YAML configuration has been imported into the UI. Please remove the `mqtt_flespi_message` platform from your `configuration.yaml` file and restart Home Assistant."
-    }
-  },
   "entity": {
     "binary_sensor": {
       "online": {

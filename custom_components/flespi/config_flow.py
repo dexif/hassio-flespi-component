@@ -1,4 +1,4 @@
-"""Config flow for mqtt_flespi_message integration.
+"""Config flow for the flespi integration.
 
 Schema v3 layout:
 - Main ConfigEntry: one per (mode, connection creds). Title: "Flespi (<host>)"
@@ -472,38 +472,16 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"count": str(len(self._direct_search_results))},
         )
 
-    # ---- import: YAML legacy + migration from v<3 entries -------------------
+    # ---- import: v<3 → v3 migration entry construction ----------------------
 
     async def async_step_import(
         self, import_data: dict[str, Any]
     ) -> FlowResult:
-        if import_data.get(_MIGRATE_KEY):
-            return await self._async_step_migration_import(import_data)
-        # Legacy YAML: create a v<3-shaped entry; the next restart's migration
-        # pass will fold it into the proper subentry model.
-        dev_id = import_data["dev_id"]
-        await self.async_set_unique_id(f"{DOMAIN}_legacy_{dev_id}")
-        self._abort_if_unique_id_configured()
-        return self.async_create_entry(
-            title=main_title_for({CONF_MODE: MODE_HA_MQTT}),
-            data={CONF_MODE: MODE_HA_MQTT},
-            subentries=[
-                ConfigSubentryData(
-                    subentry_type=SUBENTRY_TYPE_DEVICE,
-                    title=dev_id,
-                    unique_id=dev_id,
-                    data={
-                        CONF_DEV_ID: dev_id,
-                        CONF_TOPIC: import_data["topic"],
-                        CONF_AUTO_DISCOVERY: False,
-                    },
-                )
-            ],
-        )
-
-    async def _async_step_migration_import(
-        self, import_data: dict[str, Any]
-    ) -> FlowResult:
+        # Only the internal v<3 → v3 migrator drives this flow (it sets the
+        # `__migrate__` flag). YAML platform import was removed in 0.5.0 — the
+        # `flespi:` YAML section never existed, so there is nothing to import.
+        if not import_data.get(_MIGRATE_KEY):
+            return self.async_abort(reason="not_supported")
         uid = import_data["main_unique_id"]
         await self.async_set_unique_id(uid)
         # If the main entry already exists, we merge via async_add_subentry
