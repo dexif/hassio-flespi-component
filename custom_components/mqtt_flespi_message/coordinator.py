@@ -101,8 +101,8 @@ class FlespiCoordinator:
 
     async def async_prepare(self) -> None:
         """Populate entity specs and seed initial data before platforms load."""
-        if self.mode == MODE_DIRECT and self.auto_discovery:
-            await self._discover_from_rest()
+        if self.mode == MODE_DIRECT:
+            await self._seed_from_rest()
 
     async def async_start(self) -> None:
         """Start the appropriate MQTT subscription based on mode."""
@@ -117,30 +117,54 @@ class FlespiCoordinator:
             await self._teardown()
             self._teardown = None
 
-    async def _discover_from_rest(self) -> None:
-        """Fetch telemetry snapshot + param metadata, build entity specs."""
+    async def _seed_from_rest(self) -> None:
+        """Seed self.data from the REST telemetry snapshot.
+
+        With auto-discovery on, also fetches param metadata and builds entity
+        specs. Without it, only the snapshot is used so legacy sensors and the
+        device tracker have values right away — live updates then flow in
+        atomically via the device-message MQTT topic, which keeps lat/lon
+        coherent on the map (per-parameter `state/.../telemetry/#` updates
+        would arrive separately and cause a staircase).
+        """
         if self.flespi_device_id is None:
-            _LOGGER.warning(
-                "Can't parse flespi device_id from topic %r; "
-                "falling back to legacy sensors for %s",
-                self.topic,
-                self.dev_id,
-            )
+            if self.auto_discovery:
+                _LOGGER.warning(
+                    "Can't parse flespi device_id from topic %r; "
+                    "falling back to legacy sensors for %s",
+                    self.topic,
+                    self.dev_id,
+                )
             return
 
         token = self.main_entry.data[CONF_TOKEN]
         client = FlespiRestClient(self.hass, token)
         try:
-            telemetry, params_meta = await asyncio.gather(
-                client.get_device_telemetry(self.flespi_device_id),
-                client.get_message_parameters(),
-            )
+            if self.auto_discovery:
+                telemetry, params_meta = await asyncio.gather(
+                    client.get_device_telemetry(self.flespi_device_id),
+                    client.get_message_parameters(),
+                )
+            else:
+                telemetry = await client.get_device_telemetry(self.flespi_device_id)
+                params_meta = {}
         except FlespiApiError as err:
             _LOGGER.error(
-                "Auto-discovery REST failed for %s; keeping legacy sensors: %s",
+                "REST seed failed for %s; entities will populate from MQTT only: %s",
                 self.dev_id,
                 err,
             )
+            return
+
+        # Seed self.data so entities show current values immediately on startup.
+        initial: dict[str, Any] = {}
+        for key, snapshot in telemetry.items():
+            if isinstance(snapshot, dict) and "value" in snapshot:
+                initial[key] = snapshot["value"]
+        if initial:
+            self.data = {**self.data, **initial}
+
+        if not self.auto_discovery:
             return
 
         sensor_specs, binary_specs = build_sensor_specs(
@@ -160,14 +184,6 @@ class FlespiCoordinator:
             return
         self.sensor_specs = sensor_specs
         self.binary_sensor_specs = binary_specs
-
-        # Seed self.data so entities show current values immediately on startup.
-        initial: dict[str, Any] = {}
-        for key, snapshot in telemetry.items():
-            if isinstance(snapshot, dict) and "value" in snapshot:
-                initial[key] = snapshot["value"]
-        if initial:
-            self.data = initial
 
     async def _start_ha_mqtt(self) -> Callable[[], Awaitable[None]]:
         """Subscribe via the Home Assistant MQTT integration."""
@@ -207,23 +223,19 @@ class FlespiCoordinator:
         unsubs.append(pool_client.subscribe(self.topic, _main_cb))
 
         if self.flespi_device_id is not None:
+            # Live updates flow through the device-message topic above (whole
+            # message, all params atomic). We don't subscribe to per-parameter
+            # state/.../telemetry/# — those arrive as separate MQTT packets and
+            # cause lat/lon updates to land out of sync (staircase on the map).
+            # Initial values come from the REST snapshot in _seed_from_rest().
             connected_topic = (
                 f"flespi/state/gw/devices/{self.flespi_device_id}/connected"
-            )
-            telemetry_prefix = (
-                f"flespi/state/gw/devices/{self.flespi_device_id}/telemetry/"
             )
 
             def _connected_cb(topic: str, payload: bytes) -> None:
                 self._process_connected(payload)
 
-            def _state_cb(topic: str, payload: bytes) -> None:
-                if topic.startswith(telemetry_prefix):
-                    param_key = topic[len(telemetry_prefix):]
-                    self._process_state_param(param_key, payload)
-
             unsubs.append(pool_client.subscribe(connected_topic, _connected_cb))
-            unsubs.append(pool_client.subscribe(f"{telemetry_prefix}#", _state_cb))
 
         async def teardown() -> None:
             for unsub in unsubs:
@@ -258,20 +270,6 @@ class FlespiCoordinator:
         # value. Lets auto-discovered non-GPS sensors refresh from telemetry-only
         # messages; device_tracker still handles missing lat/lon via .get().
         self.data = {**self.data, **data}
-        self._notify()
-
-    @callback
-    def _process_state_param(self, key: str, payload: bytes | str) -> None:
-        """Apply a single retained telemetry-state update to self.data."""
-        try:
-            value = json.loads(payload)
-        except (ValueError, TypeError):
-            value = (
-                payload.decode("utf-8", errors="replace")
-                if isinstance(payload, (bytes, bytearray))
-                else str(payload)
-            )
-        self.data[key] = value
         self._notify()
 
     @callback
