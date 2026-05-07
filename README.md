@@ -3,6 +3,32 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
+> [!IMPORTANT]
+> **Upgrading from 0.4.x to 0.5.0 — one-time HACS reinstall required.**
+>
+> 0.5.0 renames the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
+> integration's path from the first time the repository was added and never refreshes it on update,
+> so a normal HACS update fails with `No manifest.json file found
+> 'custom_components/mqtt_flespi_message/manifest.json'`. This is a HACS limitation, not a bug in the
+> integration.
+>
+> **What to do — once, before installing 0.5.0:**
+>
+> 1. Make sure you have run **0.4.5 at least once** on this Home Assistant instance. 0.4.5 ships a
+>    dormant migration shim that performs the actual rename of your config entries / devices /
+>    entities once 0.5.0 is on disk. Skip this step and your devices will be stranded on the old
+>    domain after upgrade. (HACS lets you pick a specific version: card → ⋮ menu → "Redownload" → choose v0.4.5.)
+> 2. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
+>    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
+>    Your devices, history, and automations stay intact.
+> 3. Add the repository back as a custom repository (Integration type) and select version
+>    **0.5.0** (or newer).
+> 4. Restart Home Assistant. The 0.4.5 migration shim runs automatically and re-parents every
+>    config entry, device, and entity to the `flespi` domain. `entity_id`s, Recorder history,
+>    Lovelace cards, and automations continue to work unchanged.
+>
+> After this one-time step, future HACS updates work normally.
+
 Home Assistant integration for GPS trackers and telematics devices connected to [flespi](https://flespi.com/).
 One connection covers many devices; each device shows up as a standard HA device with GPS location on the map,
 speed / altitude / battery sensors out of the box, and optional auto-discovery of every other telemetry
@@ -25,8 +51,8 @@ parameter the device reports.
 3. Restart Home Assistant.
 
 ### Manual
-Copy `custom_components/mqtt_flespi_message/` to your `config/custom_components/` directory and
-restart Home Assistant.
+Copy `custom_components/flespi/` to your `config/custom_components/` directory and restart Home
+Assistant.
 
 ## Configuration
 
