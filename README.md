@@ -130,6 +130,11 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.1**
+  - Documentation only — no code changes. Added the HACS reinstall workaround
+    for 0.4.x → 0.5.x upgrades (top-of-README warning block + dedicated
+    section in the GitHub release notes), plus changelog entries for 0.4.6
+    and 0.5.0 that were missing.
 - **0.5.0**
   - Domain rename: `mqtt_flespi_message` → `flespi`. The integration's display
     name was already "Flespi" since 0.4.4; the internal domain now matches.
