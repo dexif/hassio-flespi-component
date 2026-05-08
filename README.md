@@ -4,28 +4,31 @@
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x to 0.5.0 — one-time HACS reinstall required.**
+> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.2 or newer).**
 >
-> 0.5.0 renames the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
+> 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
 > integration's path from the first time the repository was added and never refreshes it on update,
 > so a normal HACS update fails with `No manifest.json file found
-> 'custom_components/mqtt_flespi_message/manifest.json'`. This is a HACS limitation, not a bug in the
-> integration.
+> 'custom_components/mqtt_flespi_message/manifest.json'`. This is a HACS limitation, not a bug in
+> the integration.
 >
-> **What to do — once, before installing 0.5.0:**
+> **What to do — once:**
 >
-> 1. Make sure you have run **0.4.5 at least once** on this Home Assistant instance. 0.4.5 ships a
->    dormant migration shim that performs the actual rename of your config entries / devices /
->    entities once 0.5.0 is on disk. Skip this step and your devices will be stranded on the old
->    domain after upgrade. (HACS lets you pick a specific version: card → ⋮ menu → "Redownload" → choose v0.4.5.)
-> 2. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
+> 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
 >    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
 >    Your devices, history, and automations stay intact.
-> 3. Add the repository back as a custom repository (Integration type) and select version
->    **0.5.0** (or newer).
-> 4. Restart Home Assistant. The 0.4.5 migration shim runs automatically and re-parents every
->    config entry, device, and entity to the `flespi` domain. `entity_id`s, Recorder history,
->    Lovelace cards, and automations continue to work unchanged.
+> 2. Add the repository back as a custom repository (Integration type) and install **0.5.2** (or
+>    newer). Earlier 0.5.x versions can leave your devices stranded on the old domain if you
+>    skipped 0.4.5.
+> 3. Restart Home Assistant. The new integration detects every old-domain config entry on
+>    startup and re-parents it to `flespi` — config entries, devices, entity registry rows, and
+>    subentry attachments. `entity_id`s, Recorder history, Lovelace cards, and automations
+>    continue to work unchanged.
+> 4. After a successful restart, you can manually delete the leftover
+>    `custom_components/mqtt_flespi_message/` folder from your `config/custom_components/`
+>    directory. HACS does not clean up old-domain folders on update; the file is harmless to leave
+>    in place but contributes a duplicate "Flespi" entry to the *Add Integration* picker until you
+>    remove it.
 >
 > After this one-time step, future HACS updates work normally.
 
@@ -130,6 +133,19 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.2**
+  - Cross-domain migration is now also performed from the new `flespi`
+    side. The 0.4.5/0.4.6 shim still does the work when the old folder is
+    on disk, but if it never ran (user jumped from 0.4.4 or earlier, the
+    shim threw an unrelated exception, etc.), the new integration now
+    detects orphan `mqtt_flespi_message` config entries on startup and
+    re-parents them itself. Same end state, double safety net.
+  - If you installed 0.5.0 or 0.5.1 on top of 0.4.x and ended up with
+    **two "Flespi" entries** showing in *Add Integration* (your devices
+    still attached to the old version 0.4.6 integration card), upgrading
+    to 0.5.2 and restarting will move everything onto the `flespi` domain.
+    The old `custom_components/mqtt_flespi_message/` folder can then be
+    removed manually — it's a no-op once the migration has run.
 - **0.5.1**
   - Documentation only — no code changes. Added the HACS reinstall workaround
     for 0.4.x → 0.5.x upgrades (top-of-README warning block + dedicated

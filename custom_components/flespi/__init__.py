@@ -13,9 +13,10 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigSubentry,
     ConfigSubentryData,
+    ConfigSubentryDataWithId,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
@@ -41,14 +42,25 @@ from .coordinator import FlespiCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+# The previous domain. The cross-domain migrator below picks up any orphan
+# entries still attached to it (users who upgraded directly from a version
+# without the 0.4.5 shim, or where the shim didn't get a chance to run).
+OLD_DOMAIN = "mqtt_flespi_message"
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the integration.
 
-    Runs the v<3 → v3 migration globally before any entry loads (no-op on a
-    fresh flespi-domain install, since entries start at v3 from day one).
+    Two migrations run sequentially before any entry loads, both idempotent:
+    1. v<3 → v3 (legacy single-device entries — no-op on the flespi domain
+       since entries start at v3 from day one, kept as a safety net).
+    2. mqtt_flespi_message → flespi (re-parents orphan old-domain entries).
+       The 0.4.5/0.4.6 shim does the same migration from the old side; this
+       one runs in the new domain and acts as a fallback for users who
+       skipped the shim (jumped from 0.4.4 or earlier to 0.5.x, etc.).
     """
     await _migrate_legacy_entries(hass)
+    await _migrate_from_old_domain(hass)
     return True
 
 
@@ -319,3 +331,223 @@ async def _migrate_group(
         _main_title_for_key(key),
     )
 
+
+# =============================================================================
+# Cross-domain migration (mqtt_flespi_message → flespi)
+#
+# Counterpart to the 0.4.5/0.4.6 shim that lived on the old-domain side. That
+# shim migrated entries to flespi when it spotted custom_components/flespi/ on
+# disk. This one runs from the new flespi side and picks up any leftover
+# old-domain entries — fallback for users who never had the shim (e.g. jumped
+# from 0.4.4 to 0.5.x) or where the shim's run was interrupted.
+#
+# Both directions are idempotent and converge on the same end state, so it's
+# safe for them to coexist while the old folder still lingers on disk.
+# =============================================================================
+
+
+async def _migrate_from_old_domain(hass: HomeAssistant) -> None:
+    """Re-parent every leftover mqtt_flespi_message entry to the flespi domain."""
+    entries = [
+        e
+        for e in hass.config_entries.async_entries(OLD_DOMAIN)
+        if e.version >= 3
+    ]
+    if not entries:
+        return
+
+    _LOGGER.warning(
+        "Migrating %d entry(ies) from '%s' to '%s' domain",
+        len(entries),
+        OLD_DOMAIN,
+        DOMAIN,
+    )
+
+    # Sequential per-entry: each touches shared registries, parallel runs would
+    # interleave updates on those.
+    for old_entry in entries:
+        try:
+            await _migrate_entry_from_old_domain(hass, old_entry)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "Cross-domain migration failed for entry %s; will retry next restart",
+                old_entry.entry_id,
+            )
+
+
+async def _migrate_entry_from_old_domain(
+    hass: HomeAssistant, old_entry: ConfigEntry
+) -> None:
+    """Move one mqtt_flespi_message entry to the flespi domain.
+
+    Mirror of the same operation in the 0.4.5 shim (just inverted). Phases:
+    1. Build/find the new flespi entry (matched by unique_id).
+    2. Re-parent entity_registry rows to the new entry_id, rewriting the
+       unique_id prefix and platform.
+    3. Re-parent device_registry rows: identifiers, config_entries set, and
+       subentry attachments.
+    4. async_add the new entry — registers + triggers setup; lookups now hit
+       the migrated registry rows.
+    5. Mirror any subentries missing on a pre-existing new_entry (idempotent
+       resume of a partial prior run; no-op on fresh construction).
+    6. Remove the old entry. It owns nothing now, cascade-delete is harmless.
+    """
+    new_entry = next(
+        (
+            e
+            for e in hass.config_entries.async_entries(DOMAIN)
+            if e.unique_id == old_entry.unique_id
+        ),
+        None,
+    )
+
+    is_fresh = new_entry is None
+    if is_fresh:
+        # Embed subentries at construction. async_add_subentry called *after*
+        # async_add does NOT re-trigger async_setup_entry, so subentries added
+        # later wouldn't get coordinators or platform forwards.
+        #
+        # ConfigSubentryDataWithId preserves subentry_id across the migration —
+        # without that, fresh ULIDs leak into the new entry, leaving
+        # entity_registry rows with `config_subentry_id` pointing at IDs that
+        # no longer exist (entities still load but lose subentry-card grouping
+        # in the UI).
+        subentries_data = [
+            ConfigSubentryDataWithId(
+                subentry_type=s.subentry_type,
+                title=s.title,
+                unique_id=s.unique_id,
+                data=dict(s.data),
+                subentry_id=s.subentry_id,
+            )
+            for s in old_entry.subentries.values()
+        ]
+        new_entry = ConfigEntry(
+            version=old_entry.version,
+            minor_version=getattr(old_entry, "minor_version", 1) or 1,
+            domain=DOMAIN,
+            title=old_entry.title,
+            data=dict(old_entry.data),
+            options=dict(old_entry.options) if old_entry.options else {},
+            source="migration",
+            unique_id=old_entry.unique_id,
+            discovery_keys=MappingProxyType({}),
+            subentries_data=subentries_data,
+        )
+
+    # entry_id is generated at construction, so registry rewrites can already
+    # point at it.
+    _migrate_entity_registry_from_old(hass, old_entry, new_entry)
+    _migrate_device_registry_from_old(hass, old_entry, new_entry)
+
+    if is_fresh:
+        await hass.config_entries.async_add(new_entry)
+    else:
+        # Resume case: a previous run may have crashed mid-mirror. Preserve
+        # subentry_id so registry rows already pointing at it stay valid.
+        existing_sub_uids = {s.unique_id for s in new_entry.subentries.values()}
+        for old_sub in old_entry.subentries.values():
+            if old_sub.unique_id in existing_sub_uids:
+                continue
+            new_sub = ConfigSubentry(
+                subentry_type=old_sub.subentry_type,
+                title=old_sub.title,
+                unique_id=old_sub.unique_id,
+                data=MappingProxyType(dict(old_sub.data)),
+                subentry_id=old_sub.subentry_id,
+            )
+            hass.config_entries.async_add_subentry(new_entry, new_sub)
+
+    await hass.config_entries.async_remove(old_entry.entry_id)
+
+
+def _migrate_entity_registry_from_old(
+    hass: HomeAssistant, old_entry: ConfigEntry, new_entry: ConfigEntry
+) -> None:
+    """Rewrite entity_registry rows from old_entry (mqtt_flespi_message) to new_entry (flespi).
+
+    Updates per row:
+    - `config_entry_id` → new_entry.entry_id
+    - `unique_id`       → swap `mqtt_flespi_message_*` prefix for `flespi_*`
+    - `platform`        → `flespi`
+
+    `entity_id` is left alone so user automations, Lovelace cards, and
+    Recorder history continue to resolve. `async_update_entity_platform`
+    records the prior unique_id under `previous_unique_id` for history
+    continuity.
+
+    `config_subentry_id` is intentionally NOT touched — subentry_ids are
+    preserved across the migration via ConfigSubentryDataWithId.
+    """
+    ent_reg = er.async_get(hass)
+    prefix_old = f"{OLD_DOMAIN}_"
+    prefix_new = f"{DOMAIN}_"
+
+    for entity in list(ent_reg.entities.values()):
+        if entity.config_entry_id != old_entry.entry_id:
+            continue
+
+        new_unique_id = entity.unique_id
+        if new_unique_id.startswith(prefix_old):
+            new_unique_id = prefix_new + new_unique_id[len(prefix_old):]
+
+        ent_reg.async_update_entity_platform(
+            entity.entity_id,
+            DOMAIN,
+            new_unique_id=new_unique_id,
+            new_config_entry_id=new_entry.entry_id,
+        )
+
+
+def _migrate_device_registry_from_old(
+    hass: HomeAssistant, old_entry: ConfigEntry, new_entry: ConfigEntry
+) -> None:
+    """Rewrite device_registry rows from old_entry to new_entry.
+
+    Three fields change per device:
+    - `identifiers`: `(mqtt_flespi_message, dev_id)` → `(flespi, dev_id)`. Must
+      change before the old entry is removed; otherwise the new integration's
+      `DeviceInfo(identifiers={(flespi, dev_id)})` won't match the existing
+      device and HA creates a duplicate.
+    - `config_entries` set: drop old_entry.entry_id, add new_entry.entry_id.
+      Without this, removing the old entry would orphan the device.
+    - `config_entries_subentries` mapping: rebind each subentry attachment from
+      old_entry.entry_id to new_entry.entry_id, keeping the same subentry_ids.
+      `async_update_device` only handles ONE subentry per call, so devices
+      attached to multiple subentries (rare here — one device = one subentry)
+      need follow-up calls.
+    """
+    dev_reg = dr.async_get(hass)
+
+    for device in list(dev_reg.devices.values()):
+        if old_entry.entry_id not in device.config_entries:
+            continue
+
+        new_identifiers = {
+            (DOMAIN if dom == OLD_DOMAIN else dom, ident)
+            for (dom, ident) in device.identifiers
+        }
+
+        # Snapshot the subentry attachment under the old entry. `{None}`
+        # default means "attached to the main entry without a specific
+        # subentry", which `async_update_device` accepts as a valid value.
+        old_subentry_ids = list(
+            device.config_entries_subentries.get(old_entry.entry_id, {None})
+        )
+
+        # First call carries the identifier swap, the entry-set swap, and the
+        # first subentry rebinding atomically.
+        dev_reg.async_update_device(
+            device.id,
+            new_identifiers=new_identifiers,
+            add_config_entry_id=new_entry.entry_id,
+            add_config_subentry_id=old_subentry_ids[0],
+            remove_config_entry_id=old_entry.entry_id,
+        )
+
+        for sub_id in old_subentry_ids[1:]:
+            dev_reg.async_update_device(
+                device.id,
+                add_config_entry_id=new_entry.entry_id,
+                add_config_subentry_id=sub_id,
+            )
