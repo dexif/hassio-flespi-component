@@ -4,7 +4,7 @@
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.3 or newer).**
+> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.4 or newer).**
 >
 > 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
 > integration's path from the first time the repository was added and never refreshes it on update,
@@ -17,8 +17,8 @@
 > 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
 >    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
 >    Your devices, history, and automations stay intact.
-> 2. Add the repository back as a custom repository (Integration type) and install **0.5.3** (or
->    newer). Earlier 0.5.x versions had a migration bug that left devices stranded on the old
+> 2. Add the repository back as a custom repository (Integration type) and install **0.5.4** (or
+>    newer). Earlier 0.5.x versions had migration bugs that left devices stranded on the old
 >    domain.
 > 3. Restart Home Assistant.
 > 4. Open *Settings → Devices & Services → + Add Integration* and search for **Flespi**. Two
@@ -135,6 +135,16 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.4**
+  - Migration fix: unload the old `mqtt_flespi_message` entry before
+    re-parenting the entity and device registries. Without this,
+    `async_update_entity_platform` rejected the rewrite with
+    `Only entities that haven't been loaded can be migrated` — the
+    config-flow migration runs after Home Assistant has already set up the
+    old integration's entries, so its entities are live by the time we try
+    to move them. (The 0.4.5/0.4.6 shim avoided this because it ran inside
+    `async_setup`, before any entry was loaded — but that path is broken
+    for unrelated reasons, see 0.5.3.)
 - **0.5.3**
   - Fixed the cross-domain migration: the new integration now registers the
     target `flespi` config entry as disabled before re-parenting the entity

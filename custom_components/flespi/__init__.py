@@ -351,34 +351,29 @@ async def _migrate_entry_from_old_domain(
 ) -> None:
     """Move one mqtt_flespi_message entry to the flespi domain.
 
-    Order of operations is delicate. HA core's entity_registry validates that
-    `config_entry_id` references an entry already known to `hass.config_entries`
-    (`_validate_item` raises ValueError otherwise — this is what made the
-    0.4.5/0.4.6 shim's straight-line migration fail). At the same time, we
-    can't just `async_add` first because that triggers `async_setup_entry`,
-    which calls `async_get_or_create` for every entity the integration owns —
-    those calls would miss the still-old-platform registry rows and create
-    duplicate entities under the new domain, then collide with us when we try
-    to migrate the originals.
+    Order of operations is delicate. Three HA core constraints conspire here:
 
-    Workaround: register the new entry **disabled** (`async_add` stores it but
-    `async_setup` early-returns on `entry.disabled_by`). Now the entry exists
-    in `hass.config_entries` so registry validation passes, but no platforms
-    have been set up yet. Migrate the registries, then flip `disabled_by` to
-    `None` — that triggers the deferred `async_setup_entry`, whose lookups
-    now hit the migrated rows cleanly.
+    1. `EntityRegistry._validate_item` rejects updates whose
+       `new_config_entry_id` isn't already in `hass.config_entries` →
+       must register the new entry BEFORE re-parenting registries.
+    2. `EntityRegistry.async_update_entity_platform` refuses to migrate
+       entities that are currently loaded (have a state in `hass.states`)
+       → must unload the old entry's entities BEFORE re-parenting.
+    3. We can't just `async_add` and let it set up the new entry — its
+       `async_setup_entry` would call `async_get_or_create` for every
+       entity, miss the still-old-platform rows, create duplicates, and
+       then collide with us when we try to migrate the originals.
 
-    Phases:
-    1. Find existing flespi entry by unique_id (resume case) or build a
-       fresh one.
-    2. Fresh-only: `async_add` it as disabled — registered, not set up.
-    3. Re-parent entity_registry rows. Validation passes because the entry
-       is now in `hass.config_entries`.
-    4. Re-parent device_registry rows.
-    5. Mirror missing subentries (resume case + safety on fresh case).
-    6. Re-enable the entry → triggers `async_setup_entry`. Platform lookups
-       hit migrated rows; no duplicates.
-    7. Remove the old entry.
+    Resolution:
+    - Register the new entry **disabled** (`async_add` stores it but
+      `async_setup` early-returns on `entry.disabled_by`) — gets us past
+      constraint 1 without tripping constraint 3.
+    - Unload the old entry — gets us past constraint 2.
+    - Re-parent registries.
+    - Mirror missing subentries (resume safety).
+    - Re-enable the new entry → triggers the deferred `async_setup_entry`;
+      lookups now hit the migrated rows.
+    - Remove the old entry.
     """
     new_entry = next(
         (
@@ -420,6 +415,18 @@ async def _migrate_entry_from_old_domain(
             subentries_data=subentries_data,
         )
         await hass.config_entries.async_add(new_entry)
+
+    # Unload the old entry first — `async_update_entity_platform` rejects
+    # loaded entities. `async_unload` is idempotent (no-op on an already-
+    # unloaded entry) and returns False on failure; in that case the OLD
+    # integration's `async_unload_entry` raised, leaving entities live, so
+    # we can't safely migrate.
+    unload_ok = await hass.config_entries.async_unload(old_entry.entry_id)
+    if not unload_ok:
+        raise RuntimeError(
+            f"Cannot migrate {old_entry.entry_id}: failed to unload the "
+            f"old `{OLD_DOMAIN}` entry — its entities are still loaded"
+        )
 
     _migrate_entity_registry_from_old(hass, old_entry, new_entry)
     _migrate_device_registry_from_old(hass, old_entry, new_entry)
