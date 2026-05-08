@@ -4,7 +4,7 @@
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.5 or newer).**
+> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.6 or newer).**
 >
 > 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
 > integration's path from the first time the repository was added and never refreshes it on update,
@@ -17,7 +17,7 @@
 > 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
 >    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
 >    Your devices, history, and automations stay intact.
-> 2. Add the repository back as a custom repository (Integration type) and install **0.5.5** (or
+> 2. Add the repository back as a custom repository (Integration type) and install **0.5.6** (or
 >    newer). Earlier 0.5.x versions had migration bugs that left devices stranded on the old
 >    domain.
 > 3. Restart Home Assistant.
@@ -135,6 +135,31 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.6**
+  - Migration round-up. Audited the whole `_migrate_entry_from_old_domain`
+    path against HA core master and fixed every constraint that could
+    trip:
+    - Pass `new_config_subentry_id` explicitly to
+      `async_update_entity_platform` (HA core validator requires it
+      whenever `config_entry_id` changes for a row that has a subentry —
+      `Can't change config entry without changing subentry`).
+    - Mirror missing subentries on the new entry **before** the
+      device-registry rewrite (resume path used to crash with
+      `Config entry X has no subentry Y` because the device update
+      referenced a subentry the new entry didn't yet have).
+    - Pre-check device-identifier collisions: a previous half-finished
+      attempt could leave an orphan flespi-domain device with the new
+      identifiers, which would then trigger `DeviceIdentifierCollisionError`
+      on retry. Drop the duplicate before rewriting the surviving device.
+    - Empty-set guard on `device.config_entries_subentries.get(...)` —
+      HA removes the entry-id key when the last subentry is removed, so
+      the existing `or {None}` default missed that path.
+    - `source=SOURCE_IMPORT` instead of the freeform string `"migration"`,
+      so any HA code branching on `source` doesn't see an unknown value.
+    - `try/except` around `async_set_disabled_by(None)` so a setup_entry
+      failure (e.g. flespi REST/MQTT unreachable at the moment of
+      enabling) is logged but doesn't roll back the registry rewrite —
+      the migration is durable; the next restart re-tries setup.
 - **0.5.5**
   - Migration fix (round 2): defensively call `hass.states.async_remove`
     on each entity right before `async_update_entity_platform`. The 0.5.4

@@ -408,13 +408,31 @@ async def _migrate_entry_from_old_domain(
             title=old_entry.title,
             data=dict(old_entry.data),
             options=dict(old_entry.options) if old_entry.options else {},
-            source="migration",
+            source=SOURCE_IMPORT,
             unique_id=old_entry.unique_id,
             disabled_by=ConfigEntryDisabler.USER,
             discovery_keys=MappingProxyType({}),
             subentries_data=subentries_data,
         )
         await hass.config_entries.async_add(new_entry)
+
+    # Mirror any subentries missing on a pre-existing new_entry (resume case)
+    # — must happen BEFORE the device-registry migration, which calls
+    # `async_update_device(add_config_subentry_id=...)` and raises
+    # `HomeAssistantError("Config entry X has no subentry Y")` if the target
+    # subentry isn't yet on the new entry.
+    existing_sub_uids = {s.unique_id for s in new_entry.subentries.values()}
+    for old_sub in old_entry.subentries.values():
+        if old_sub.unique_id in existing_sub_uids:
+            continue
+        new_sub = ConfigSubentry(
+            subentry_type=old_sub.subentry_type,
+            title=old_sub.title,
+            unique_id=old_sub.unique_id,
+            data=MappingProxyType(dict(old_sub.data)),
+            subentry_id=old_sub.subentry_id,
+        )
+        hass.config_entries.async_add_subentry(new_entry, new_sub)
 
     # Unload the old entry first — `async_update_entity_platform` rejects
     # loaded entities. `async_unload` is idempotent (no-op on an already-
@@ -431,24 +449,25 @@ async def _migrate_entry_from_old_domain(
     _migrate_entity_registry_from_old(hass, old_entry, new_entry)
     _migrate_device_registry_from_old(hass, old_entry, new_entry)
 
-    # Mirror any subentries missing on a pre-existing new_entry (resume case)
-    # or freshly-added one (no-op since async_add already embedded them).
-    existing_sub_uids = {s.unique_id for s in new_entry.subentries.values()}
-    for old_sub in old_entry.subentries.values():
-        if old_sub.unique_id in existing_sub_uids:
-            continue
-        new_sub = ConfigSubentry(
-            subentry_type=old_sub.subentry_type,
-            title=old_sub.title,
-            unique_id=old_sub.unique_id,
-            data=MappingProxyType(dict(old_sub.data)),
-            subentry_id=old_sub.subentry_id,
-        )
-        hass.config_entries.async_add_subentry(new_entry, new_sub)
-
     # Re-enable: registry rows are migrated, async_setup_entry now finds them.
+    # Wrap because async_set_disabled_by(None) awaits async_reload, which
+    # awaits the new entry's async_setup_entry — any setup failure (MQTT
+    # unreachable, etc.) bubbles up here. Migration of registries already
+    # succeeded; if setup fails, the entry stays disabled and the next
+    # restart will retry it via the normal setup machinery.
     if new_entry.disabled_by is not None:
-        await hass.config_entries.async_set_disabled_by(new_entry.entry_id, None)
+        try:
+            await hass.config_entries.async_set_disabled_by(
+                new_entry.entry_id, None
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "Migrated registries for entry %s but failed to enable the "
+                "new flespi entry %s; enable it manually from the UI or "
+                "restart Home Assistant",
+                old_entry.entry_id,
+                new_entry.entry_id,
+            )
 
     await hass.config_entries.async_remove(old_entry.entry_id)
 
@@ -478,6 +497,15 @@ def _migrate_entity_registry_from_old(
     integration's `async_unload_entry` shortcuts the platform unload). We
     defensively call `hass.states.async_remove` per row — it's idempotent,
     so harmless when the state is already gone.
+
+    HA core also enforces that whenever `config_entry_id` changes for an
+    entity that has a `config_subentry_id`, the subentry id must be passed
+    explicitly (validator check is `is UNDEFINED`, not value-equality). We
+    pass the row's existing `config_subentry_id` — the new entry has a
+    subentry with the same id (preserved via ConfigSubentryDataWithId), so
+    no real change is needed; the kwarg just satisfies the validator.
+    Skipped when the row has no subentry (validator only fires when
+    old_config_subentry_id is truthy).
     """
     ent_reg = er.async_get(hass)
     prefix_old = f"{OLD_DOMAIN}_"
@@ -493,11 +521,17 @@ def _migrate_entity_registry_from_old(
 
         hass.states.async_remove(entity.entity_id)
 
+        update_kwargs: dict[str, Any] = {
+            "new_unique_id": new_unique_id,
+            "new_config_entry_id": new_entry.entry_id,
+        }
+        if entity.config_subentry_id is not None:
+            update_kwargs["new_config_subentry_id"] = entity.config_subentry_id
+
         ent_reg.async_update_entity_platform(
             entity.entity_id,
             DOMAIN,
-            new_unique_id=new_unique_id,
-            new_config_entry_id=new_entry.entry_id,
+            **update_kwargs,
         )
 
 
@@ -530,12 +564,26 @@ def _migrate_device_registry_from_old(
             for (dom, ident) in device.identifiers
         }
 
-        # Snapshot the subentry attachment under the old entry. `{None}`
-        # default means "attached to the main entry without a specific
-        # subentry", which `async_update_device` accepts as a valid value.
-        old_subentry_ids = list(
-            device.config_entries_subentries.get(old_entry.entry_id, {None})
-        )
+        # Resume safety: a previous half-finished attempt may have created a
+        # separate device under the new domain identifiers (e.g., the new
+        # entry got enabled briefly and its setup_entry called `DeviceInfo`
+        # before we were able to remove the old entry). HA's
+        # `_validate_identifiers` (`device_registry.py:_validate_identifiers`)
+        # would then raise `DeviceIdentifierCollisionError` when we try to
+        # rewrite the old device's identifiers. Drop the orphan duplicate
+        # first — we want to keep the original device id so existing
+        # entity-registry rows still resolve.
+        for new_ident in new_identifiers:
+            duplicate = dev_reg.async_get_device(identifiers={new_ident})
+            if duplicate is not None and duplicate.id != device.id:
+                dev_reg.async_remove_device(duplicate.id)
+
+        # Snapshot the subentry attachment under the old entry. The mapping
+        # may legitimately be missing (default `{None}`) or pruned to an
+        # empty set (HA removes the key when the last subentry is removed),
+        # so guard both.
+        subs = device.config_entries_subentries.get(old_entry.entry_id) or {None}
+        old_subentry_ids = list(subs) or [None]
 
         # First call carries the identifier swap, the entry-set swap, and the
         # first subentry rebinding atomically.
