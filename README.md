@@ -4,7 +4,7 @@
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.6 or newer).**
+> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.7 or newer).**
 >
 > 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
 > integration's path from the first time the repository was added and never refreshes it on update,
@@ -17,7 +17,7 @@
 > 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
 >    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
 >    Your devices, history, and automations stay intact.
-> 2. Add the repository back as a custom repository (Integration type) and install **0.5.6** (or
+> 2. Add the repository back as a custom repository (Integration type) and install **0.5.7** (or
 >    newer). Earlier 0.5.x versions had migration bugs that left devices stranded on the old
 >    domain.
 > 3. Restart Home Assistant.
@@ -135,6 +135,25 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.7**
+  - Repair step on `async_setup_entry` for devices migrated by 0.5.6 with
+    an inconsistent `config_entries_subentries` mapping. The 0.5.6
+    migration could call `async_update_device(add_config_subentry_id=None)`
+    when the old device had no specific subentry binding; HA core then
+    adds the entry to `config_entries` but does NOT initialize the
+    matching `config_entries_subentries[entry_id]` mapping, so subsequent
+    `async_get_or_create_device` calls during entity setup crash with
+    `KeyError: '<entry_id>'`. The repair detects the mismatch, infers the
+    correct subentry from the entity registry, and rebuilds the binding
+    via `remove_config_entry_id` + fresh `add_config_entry_id +
+    add_config_subentry_id`. Idempotent — no-op for fresh installs and
+    consistently-bound entries.
+  - Migration fix for the same root cause: `_migrate_device_registry_from_old`
+    now infers the target subentry from the entity registry (entities are
+    re-parented before devices, so they carry the canonical
+    `config_subentry_id`). Falls back to the old device-side mapping but
+    only uses real subentry ids — never passes `add_config_subentry_id=None`
+    again.
 - **0.5.6**
   - Migration round-up. Audited the whole `_migrate_entry_from_old_domain`
     path against HA core master and fixed every constraint that could

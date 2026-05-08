@@ -90,6 +90,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return False
 
+    # Repair `config_entries_subentries` mapping for devices migrated by
+    # 0.5.6 — see `_repair_device_subentry_bindings` for details. Idempotent
+    # and a no-op for fresh installs / already-consistent entries.
+    _repair_device_subentry_bindings(hass, entry)
+
     domain_data = hass.data.setdefault(DOMAIN, {})
     per_subentry: dict[str, FlespiCoordinator] = {}
     domain_data[entry.entry_id] = per_subentry
@@ -146,6 +151,81 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Error stopping coordinator during unload")
     return unload_ok
+
+
+def _repair_device_subentry_bindings(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Repair `device.config_entries_subentries` inconsistency from 0.5.6 migrations.
+
+    A device migrated by 0.5.6's `_migrate_device_registry_from_old` could end up
+    with `entry.entry_id` in its `config_entries` set but **no corresponding key
+    in `config_entries_subentries`** — when the old device's subentry mapping
+    was missing or set to `{None}`, our migration passed
+    `add_config_subentry_id=None` to `dr.async_update_device`. HA core's handling
+    of `None` adds the entry to `config_entries` but doesn't create a
+    `config_entries_subentries[entry_id]` mapping. Subsequent
+    `async_get_or_create_device` calls during entity setup then trip
+    `KeyError: '<entry_id>'` on `old.config_entries_subentries[add_config_entry_id]`
+    (HA core `device_registry.py` line 1153).
+
+    Repair pattern, per offending device:
+    1. Detect the inconsistency.
+    2. Determine the correct subentry binding from the entity registry — each
+       migrated entity tied to this device carries the right `config_subentry_id`.
+    3. Rebuild the mapping with `remove_config_entry_id` + `add_config_entry_id +
+       add_config_subentry_id`. The remove clears both `config_entries` and the
+       broken `config_entries_subentries` state in one shot; the re-add
+       initializes the mapping cleanly.
+
+    Both `dr.async_update_device` calls run synchronously within one event-loop
+    tick, so there's no window where the device exists with zero config entries
+    that could trigger HA's cascade-delete. Idempotent: no-op when the binding
+    is already consistent.
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+
+    for device in list(dev_reg.devices.values()):
+        if entry.entry_id not in device.config_entries:
+            continue
+        if entry.entry_id in device.config_entries_subentries:
+            continue
+
+        target_subentries = {
+            ent.config_subentry_id
+            for ent in ent_reg.entities.values()
+            if ent.device_id == device.id
+            and ent.config_entry_id == entry.entry_id
+            and ent.config_subentry_id is not None
+        }
+
+        if not target_subentries:
+            _LOGGER.warning(
+                "Device %s has entry %s in config_entries but no subentry "
+                "mapping, and no entities point at a subentry — skipping repair",
+                device.id,
+                entry.entry_id,
+            )
+            continue
+
+        dev_reg.async_update_device(
+            device.id,
+            remove_config_entry_id=entry.entry_id,
+        )
+        for sub_id in target_subentries:
+            dev_reg.async_update_device(
+                device.id,
+                add_config_entry_id=entry.entry_id,
+                add_config_subentry_id=sub_id,
+            )
+
+        _LOGGER.info(
+            "Repaired subentry binding for device %s on entry %s: %s",
+            device.id,
+            entry.entry_id,
+            sorted(target_subentries),
+        )
 
 
 def _migrate_legacy_tracker_entity(hass: HomeAssistant, dev_id: str) -> None:
@@ -554,6 +634,7 @@ def _migrate_device_registry_from_old(
       need follow-up calls.
     """
     dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
 
     for device in list(dev_reg.devices.values()):
         if old_entry.entry_id not in device.config_entries:
@@ -578,26 +659,47 @@ def _migrate_device_registry_from_old(
             if duplicate is not None and duplicate.id != device.id:
                 dev_reg.async_remove_device(duplicate.id)
 
-        # Snapshot the subentry attachment under the old entry. The mapping
-        # may legitimately be missing (default `{None}`) or pruned to an
-        # empty set (HA removes the key when the last subentry is removed),
-        # so guard both.
-        subs = device.config_entries_subentries.get(old_entry.entry_id) or {None}
-        old_subentry_ids = list(subs) or [None]
+        # Determine which subentries the device should bind to. The entity
+        # registry is the canonical source — by this point the entity rows
+        # have been re-parented and carry the right `config_subentry_id`.
+        # Fall back to the device's own `config_entries_subentries` mapping
+        # under the old entry if no entity tells us, but ONLY use real
+        # subentry ids: passing `add_config_subentry_id=None` to
+        # `async_update_device` adds the entry to `config_entries` but
+        # does NOT create the matching `config_entries_subentries[entry_id]`
+        # mapping (HA core quirk), leaving the device in an inconsistent
+        # state that crashes subsequent `async_get_or_create_device` calls
+        # with KeyError. Better to omit the kwarg entirely.
+        target_subentry_ids = [
+            ent.config_subentry_id
+            for ent in ent_reg.entities.values()
+            if ent.device_id == device.id
+            and ent.config_subentry_id is not None
+        ]
+        if not target_subentry_ids:
+            subs = device.config_entries_subentries.get(old_entry.entry_id) or set()
+            target_subentry_ids = [s for s in subs if s is not None]
 
-        # First call carries the identifier swap, the entry-set swap, and the
-        # first subentry rebinding atomically.
-        dev_reg.async_update_device(
-            device.id,
-            new_identifiers=new_identifiers,
-            add_config_entry_id=new_entry.entry_id,
-            add_config_subentry_id=old_subentry_ids[0],
-            remove_config_entry_id=old_entry.entry_id,
-        )
-
-        for sub_id in old_subentry_ids[1:]:
+        # First call: identifier swap + entry-set swap + (optionally) first
+        # subentry binding, atomic under one HA mutation.
+        if target_subentry_ids:
             dev_reg.async_update_device(
                 device.id,
+                new_identifiers=new_identifiers,
                 add_config_entry_id=new_entry.entry_id,
-                add_config_subentry_id=sub_id,
+                add_config_subentry_id=target_subentry_ids[0],
+                remove_config_entry_id=old_entry.entry_id,
+            )
+            for sub_id in target_subentry_ids[1:]:
+                dev_reg.async_update_device(
+                    device.id,
+                    add_config_entry_id=new_entry.entry_id,
+                    add_config_subentry_id=sub_id,
+                )
+        else:
+            dev_reg.async_update_device(
+                device.id,
+                new_identifiers=new_identifiers,
+                add_config_entry_id=new_entry.entry_id,
+                remove_config_entry_id=old_entry.entry_id,
             )
