@@ -135,6 +135,25 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.8**
+  - Migration hotfix for users upgrading from `mqtt_flespi_message` 0.4.x
+    directly to 0.5.7 with multi-entity devices. The 0.5.7 migration combined
+    `add_config_entry_id + add_config_subentry_id + remove_config_entry_id`
+    in a single `async_update_device` call, hitting an HA core ordering quirk
+    (still present in 2026.4) where the remove path overwrites the local
+    `config_entries_subentries` with `dict(old.config_entries_subentries)`
+    and silently loses the new entry's subentry mapping. The follow-up loop
+    over per-entity subentry ids (which contained duplicates) then crashed
+    with `KeyError: '<new_entry_id>'`.
+  - Fix splits the first call into add-only + remove-only and deduplicates
+    the inferred subentry list. Cross-domain migrations now finish without
+    the inconsistent intermediate state.
+  - Repair step strengthened: `_repair_device_subentry_bindings` no longer
+    relies on `async_update_device(remove_config_entry_id=...)` (which itself
+    KeyErrors on devices already in the broken state). Rebuilds the mapping
+    directly via `attr.evolve` on the frozen `DeviceEntry` and writes it back
+    through `DeviceRegistryItems` — recovers devices left half-migrated by
+    0.5.6/0.5.7 attempts.
 - **0.5.7**
   - Repair step on `async_setup_entry` for devices migrated by 0.5.6 with
     an inconsistent `config_entries_subentries` mapping. The 0.5.6
