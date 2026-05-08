@@ -59,6 +59,10 @@ from .const import (
 )
 from .pool import build_direct_client
 
+# Local import — module-level safe because __init__.py is fully loaded by the
+# time HA imports config_flow.py.
+from . import OLD_DOMAIN, _migrate_entry_from_old_domain
+
 _LOGGER = logging.getLogger(__name__)
 
 _SEARCH = "search"
@@ -278,9 +282,85 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        # If there are still entries on the previous `mqtt_flespi_message`
+        # domain (the dormant migration shim from 0.4.5/0.4.6 didn't run, or
+        # crashed silently — tracked under
+        # `Domain migration failed for entry ...` in the log), divert the
+        # user here. Migrating from the new flespi side is the only path that
+        # works once the old shim has gone unused or broken.
+        orphans = [
+            e
+            for e in self.hass.config_entries.async_entries(OLD_DOMAIN)
+            if e.version >= 3
+        ]
+        if orphans:
+            return await self.async_step_migrate_from_old()
+
         return self.async_show_menu(
             step_id="user",
             menu_options=[MODE_HA_MQTT, MODE_DIRECT],
+        )
+
+    # ---- one-time cross-domain migration (mqtt_flespi_message → flespi) -----
+
+    async def async_step_migrate_from_old(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm + run migration of orphan entries from the old domain.
+
+        Shown automatically by `async_step_user` when entries on the previous
+        `mqtt_flespi_message` domain are detected. The actual heavy lifting
+        sits in `_migrate_entry_from_old_domain` in __init__.py; this step
+        gates it behind explicit user confirmation and surfaces the
+        success/failure as an abort reason.
+        """
+        orphans = [
+            e
+            for e in self.hass.config_entries.async_entries(OLD_DOMAIN)
+            if e.version >= 3
+        ]
+        if not orphans:
+            # Already migrated by another path (concurrent flow run, restart
+            # in the middle of the wizard, etc.) — nothing to do.
+            return self.async_abort(reason="migration_already_done")
+
+        device_count = sum(len(e.subentries) for e in orphans)
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="migrate_from_old",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "entry_count": str(len(orphans)),
+                    "device_count": str(device_count),
+                },
+            )
+
+        failed = 0
+        for entry in orphans:
+            try:
+                await _migrate_entry_from_old_domain(self.hass, entry)
+            except Exception:  # noqa: BLE001
+                failed += 1
+                _LOGGER.exception(
+                    "Cross-domain migration via config flow failed for entry %s",
+                    entry.entry_id,
+                )
+
+        if failed:
+            return self.async_abort(
+                reason="migration_failed",
+                description_placeholders={
+                    "failed": str(failed),
+                    "total": str(len(orphans)),
+                },
+            )
+        return self.async_abort(
+            reason="migration_complete",
+            description_placeholders={
+                "entry_count": str(len(orphans)),
+                "device_count": str(device_count),
+            },
         )
 
     # ---- HA-MQTT path: one step adds first device + singleton main entry ----

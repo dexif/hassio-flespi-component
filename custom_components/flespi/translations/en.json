@@ -79,6 +79,10 @@
         "data_description": {
           "token": "A flespi token with access to the target device(s)"
         }
+      },
+      "migrate_from_old": {
+        "title": "Migrate from the previous integration",
+        "description": "Found {entry_count} configuration(s) and {device_count} device(s) still attached to the previous `mqtt_flespi_message` integration. Submit to move them onto the new `flespi` domain. Entity IDs, history, and automations are preserved. After a successful migration you can remove the leftover `custom_components/mqtt_flespi_message/` folder from your `config/` directory."
       }
     },
     "error": {
@@ -89,7 +93,11 @@
     },
     "abort": {
       "already_configured": "This connection or device is already configured",
-      "nothing_to_configure": "This connection has no editable fields (HA-MQTT mode uses Home Assistant's MQTT settings)."
+      "nothing_to_configure": "This connection has no editable fields (HA-MQTT mode uses Home Assistant's MQTT settings).",
+      "migration_complete": "Migrated {entry_count} configuration(s) and {device_count} device(s) from `mqtt_flespi_message` to `flespi`. You can now delete the `custom_components/mqtt_flespi_message/` folder from your `config/` directory.",
+      "migration_failed": "Migration failed for {failed} of {total} configuration(s). Check the Home Assistant log for details and restart to retry.",
+      "migration_already_done": "No entries on the previous `mqtt_flespi_message` domain were found — migration likely already completed.",
+      "not_supported": "This flow path is not supported."
     }
   },
   "config_subentries": {

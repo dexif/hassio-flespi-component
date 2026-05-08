@@ -4,7 +4,7 @@
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.2 or newer).**
+> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.3 or newer).**
 >
 > 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
 > integration's path from the first time the repository was added and never refreshes it on update,
@@ -17,18 +17,20 @@
 > 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
 >    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
 >    Your devices, history, and automations stay intact.
-> 2. Add the repository back as a custom repository (Integration type) and install **0.5.2** (or
->    newer). Earlier 0.5.x versions can leave your devices stranded on the old domain if you
->    skipped 0.4.5.
-> 3. Restart Home Assistant. The new integration detects every old-domain config entry on
->    startup and re-parents it to `flespi` — config entries, devices, entity registry rows, and
->    subentry attachments. `entity_id`s, Recorder history, Lovelace cards, and automations
->    continue to work unchanged.
-> 4. After a successful restart, you can manually delete the leftover
+> 2. Add the repository back as a custom repository (Integration type) and install **0.5.3** (or
+>    newer). Earlier 0.5.x versions had a migration bug that left devices stranded on the old
+>    domain.
+> 3. Restart Home Assistant.
+> 4. Open *Settings → Devices & Services → + Add Integration* and search for **Flespi**. Two
+>    entries with the same name appear — click either; the new integration detects the orphan
+>    entries and shows a migration form. Submit it to re-parent every config entry, device, and
+>    entity registry row from `mqtt_flespi_message` to `flespi`. `entity_id`s, Recorder history,
+>    Lovelace cards, and automations continue to work unchanged.
+> 5. After a successful migration, manually delete the leftover
 >    `custom_components/mqtt_flespi_message/` folder from your `config/custom_components/`
->    directory. HACS does not clean up old-domain folders on update; the file is harmless to leave
->    in place but contributes a duplicate "Flespi" entry to the *Add Integration* picker until you
->    remove it.
+>    directory. HACS does not clean up old-domain folders on update; the folder is harmless to
+>    leave in place but contributes a duplicate "Flespi" entry to the *Add Integration* picker
+>    until you remove it.
 >
 > After this one-time step, future HACS updates work normally.
 
@@ -133,6 +135,20 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.3**
+  - Fixed the cross-domain migration: the new integration now registers the
+    target `flespi` config entry as disabled before re-parenting the entity
+    and device registries, and re-enables it once the rows are moved. This
+    works around HA core's tightened `_validate_item` check (`Can't link
+    entity to unknown config entry`) that broke the same migration in
+    0.4.5/0.4.6's dormant shim and in 0.5.2.
+  - Added a one-time migration step to the *Add Integration → Flespi* flow.
+    When orphan `mqtt_flespi_message` config entries are detected, the
+    wizard shows a confirmation form ("Found N configuration(s) and M
+    device(s) on the previous integration — migrate?") and runs the rewrite
+    on submit. This solves the chicken-and-egg where the new integration
+    couldn't auto-migrate on startup because it had no config entries yet
+    (and Home Assistant therefore didn't load it).
 - **0.5.2**
   - Cross-domain migration is now also performed from the new `flespi`
     side. The 0.4.5/0.4.6 shim still does the work when the old folder is

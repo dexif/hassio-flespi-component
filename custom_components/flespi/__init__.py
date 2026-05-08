@@ -11,6 +11,7 @@ from typing import Any
 from homeassistant.config_entries import (
     SOURCE_IMPORT,
     ConfigEntry,
+    ConfigEntryDisabler,
     ConfigSubentry,
     ConfigSubentryData,
     ConfigSubentryDataWithId,
@@ -51,16 +52,19 @@ OLD_DOMAIN = "mqtt_flespi_message"
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the integration.
 
-    Two migrations run sequentially before any entry loads, both idempotent:
-    1. v<3 → v3 (legacy single-device entries — no-op on the flespi domain
-       since entries start at v3 from day one, kept as a safety net).
-    2. mqtt_flespi_message → flespi (re-parents orphan old-domain entries).
-       The 0.4.5/0.4.6 shim does the same migration from the old side; this
-       one runs in the new domain and acts as a fallback for users who
-       skipped the shim (jumped from 0.4.4 or earlier to 0.5.x, etc.).
+    Runs the v<3 → v3 migration globally before any entry loads (no-op on a
+    fresh flespi-domain install, since entries start at v3 from day one).
+
+    The cross-domain migration (mqtt_flespi_message → flespi) intentionally
+    does NOT run here. It would deadlock: the migration's final step calls
+    `async_set_disabled_by(None)` on the freshly-added flespi entry, which
+    triggers `async_setup_component("flespi")`, which would try to acquire
+    the flespi setup lock that this very call is already holding. That
+    migration lives in `config_flow.async_step_migrate_from_old` instead —
+    by the time the flow runs, this `async_setup` has completed and the
+    lock is released.
     """
     await _migrate_legacy_entries(hass)
-    await _migrate_from_old_domain(hass)
     return True
 
 
@@ -335,44 +339,11 @@ async def _migrate_group(
 # =============================================================================
 # Cross-domain migration (mqtt_flespi_message → flespi)
 #
-# Counterpart to the 0.4.5/0.4.6 shim that lived on the old-domain side. That
-# shim migrated entries to flespi when it spotted custom_components/flespi/ on
-# disk. This one runs from the new flespi side and picks up any leftover
-# old-domain entries — fallback for users who never had the shim (e.g. jumped
-# from 0.4.4 to 0.5.x) or where the shim's run was interrupted.
-#
-# Both directions are idempotent and converge on the same end state, so it's
-# safe for them to coexist while the old folder still lingers on disk.
+# Run only from `config_flow.async_step_migrate_from_old`. Cannot live in
+# `async_setup` because the final `async_set_disabled_by(None)` call here
+# would re-acquire the flespi setup lock and deadlock. By the time the
+# config flow runs, our `async_setup` has completed and the lock is free.
 # =============================================================================
-
-
-async def _migrate_from_old_domain(hass: HomeAssistant) -> None:
-    """Re-parent every leftover mqtt_flespi_message entry to the flespi domain."""
-    entries = [
-        e
-        for e in hass.config_entries.async_entries(OLD_DOMAIN)
-        if e.version >= 3
-    ]
-    if not entries:
-        return
-
-    _LOGGER.warning(
-        "Migrating %d entry(ies) from '%s' to '%s' domain",
-        len(entries),
-        OLD_DOMAIN,
-        DOMAIN,
-    )
-
-    # Sequential per-entry: each touches shared registries, parallel runs would
-    # interleave updates on those.
-    for old_entry in entries:
-        try:
-            await _migrate_entry_from_old_domain(hass, old_entry)
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception(
-                "Cross-domain migration failed for entry %s; will retry next restart",
-                old_entry.entry_id,
-            )
 
 
 async def _migrate_entry_from_old_domain(
@@ -380,17 +351,34 @@ async def _migrate_entry_from_old_domain(
 ) -> None:
     """Move one mqtt_flespi_message entry to the flespi domain.
 
-    Mirror of the same operation in the 0.4.5 shim (just inverted). Phases:
-    1. Build/find the new flespi entry (matched by unique_id).
-    2. Re-parent entity_registry rows to the new entry_id, rewriting the
-       unique_id prefix and platform.
-    3. Re-parent device_registry rows: identifiers, config_entries set, and
-       subentry attachments.
-    4. async_add the new entry — registers + triggers setup; lookups now hit
-       the migrated registry rows.
-    5. Mirror any subentries missing on a pre-existing new_entry (idempotent
-       resume of a partial prior run; no-op on fresh construction).
-    6. Remove the old entry. It owns nothing now, cascade-delete is harmless.
+    Order of operations is delicate. HA core's entity_registry validates that
+    `config_entry_id` references an entry already known to `hass.config_entries`
+    (`_validate_item` raises ValueError otherwise — this is what made the
+    0.4.5/0.4.6 shim's straight-line migration fail). At the same time, we
+    can't just `async_add` first because that triggers `async_setup_entry`,
+    which calls `async_get_or_create` for every entity the integration owns —
+    those calls would miss the still-old-platform registry rows and create
+    duplicate entities under the new domain, then collide with us when we try
+    to migrate the originals.
+
+    Workaround: register the new entry **disabled** (`async_add` stores it but
+    `async_setup` early-returns on `entry.disabled_by`). Now the entry exists
+    in `hass.config_entries` so registry validation passes, but no platforms
+    have been set up yet. Migrate the registries, then flip `disabled_by` to
+    `None` — that triggers the deferred `async_setup_entry`, whose lookups
+    now hit the migrated rows cleanly.
+
+    Phases:
+    1. Find existing flespi entry by unique_id (resume case) or build a
+       fresh one.
+    2. Fresh-only: `async_add` it as disabled — registered, not set up.
+    3. Re-parent entity_registry rows. Validation passes because the entry
+       is now in `hass.config_entries`.
+    4. Re-parent device_registry rows.
+    5. Mirror missing subentries (resume case + safety on fresh case).
+    6. Re-enable the entry → triggers `async_setup_entry`. Platform lookups
+       hit migrated rows; no duplicates.
+    7. Remove the old entry.
     """
     new_entry = next(
         (
@@ -403,15 +391,11 @@ async def _migrate_entry_from_old_domain(
 
     is_fresh = new_entry is None
     if is_fresh:
-        # Embed subentries at construction. async_add_subentry called *after*
-        # async_add does NOT re-trigger async_setup_entry, so subentries added
-        # later wouldn't get coordinators or platform forwards.
-        #
-        # ConfigSubentryDataWithId preserves subentry_id across the migration —
-        # without that, fresh ULIDs leak into the new entry, leaving
+        # ConfigSubentryDataWithId preserves subentry_id across the migration.
+        # Without it, fresh ULIDs leak into the new entry, leaving
         # entity_registry rows with `config_subentry_id` pointing at IDs that
-        # no longer exist (entities still load but lose subentry-card grouping
-        # in the UI).
+        # no longer exist (entities still load but lose their subentry-card
+        # grouping in the UI).
         subentries_data = [
             ConfigSubentryDataWithId(
                 subentry_type=s.subentry_type,
@@ -431,32 +415,33 @@ async def _migrate_entry_from_old_domain(
             options=dict(old_entry.options) if old_entry.options else {},
             source="migration",
             unique_id=old_entry.unique_id,
+            disabled_by=ConfigEntryDisabler.USER,
             discovery_keys=MappingProxyType({}),
             subentries_data=subentries_data,
         )
+        await hass.config_entries.async_add(new_entry)
 
-    # entry_id is generated at construction, so registry rewrites can already
-    # point at it.
     _migrate_entity_registry_from_old(hass, old_entry, new_entry)
     _migrate_device_registry_from_old(hass, old_entry, new_entry)
 
-    if is_fresh:
-        await hass.config_entries.async_add(new_entry)
-    else:
-        # Resume case: a previous run may have crashed mid-mirror. Preserve
-        # subentry_id so registry rows already pointing at it stay valid.
-        existing_sub_uids = {s.unique_id for s in new_entry.subentries.values()}
-        for old_sub in old_entry.subentries.values():
-            if old_sub.unique_id in existing_sub_uids:
-                continue
-            new_sub = ConfigSubentry(
-                subentry_type=old_sub.subentry_type,
-                title=old_sub.title,
-                unique_id=old_sub.unique_id,
-                data=MappingProxyType(dict(old_sub.data)),
-                subentry_id=old_sub.subentry_id,
-            )
-            hass.config_entries.async_add_subentry(new_entry, new_sub)
+    # Mirror any subentries missing on a pre-existing new_entry (resume case)
+    # or freshly-added one (no-op since async_add already embedded them).
+    existing_sub_uids = {s.unique_id for s in new_entry.subentries.values()}
+    for old_sub in old_entry.subentries.values():
+        if old_sub.unique_id in existing_sub_uids:
+            continue
+        new_sub = ConfigSubentry(
+            subentry_type=old_sub.subentry_type,
+            title=old_sub.title,
+            unique_id=old_sub.unique_id,
+            data=MappingProxyType(dict(old_sub.data)),
+            subentry_id=old_sub.subentry_id,
+        )
+        hass.config_entries.async_add_subentry(new_entry, new_sub)
+
+    # Re-enable: registry rows are migrated, async_setup_entry now finds them.
+    if new_entry.disabled_by is not None:
+        await hass.config_entries.async_set_disabled_by(new_entry.entry_id, None)
 
     await hass.config_entries.async_remove(old_entry.entry_id)
 
