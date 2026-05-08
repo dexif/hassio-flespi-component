@@ -4,7 +4,7 @@
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
 > [!IMPORTANT]
-> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.4 or newer).**
+> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.5 or newer).**
 >
 > 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
 > integration's path from the first time the repository was added and never refreshes it on update,
@@ -17,7 +17,7 @@
 > 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
 >    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
 >    Your devices, history, and automations stay intact.
-> 2. Add the repository back as a custom repository (Integration type) and install **0.5.4** (or
+> 2. Add the repository back as a custom repository (Integration type) and install **0.5.5** (or
 >    newer). Earlier 0.5.x versions had migration bugs that left devices stranded on the old
 >    domain.
 > 3. Restart Home Assistant.
@@ -135,6 +135,16 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.5.5**
+  - Migration fix (round 2): defensively call `hass.states.async_remove`
+    on each entity right before `async_update_entity_platform`. The 0.5.4
+    `async_unload` is supposed to clear `hass.states` for the old entry's
+    entities, but in some setups a state lingers — likely a coordinator
+    background task re-publishing during teardown — and HA core's check
+    `hass.states.get(entity_id) is not None and state.state !=
+    STATE_UNKNOWN` then aborts the migration. `hass.states.async_remove`
+    is idempotent, so it's a harmless backstop when the unload already
+    cleaned up.
 - **0.5.4**
   - Migration fix: unload the old `mqtt_flespi_message` entry before
     re-parenting the entity and device registries. Without this,

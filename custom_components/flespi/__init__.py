@@ -470,6 +470,14 @@ def _migrate_entity_registry_from_old(
 
     `config_subentry_id` is intentionally NOT touched — subentry_ids are
     preserved across the migration via ConfigSubentryDataWithId.
+
+    `async_update_entity_platform` raises if `hass.states.get(entity_id)`
+    returns a non-UNKNOWN state. The preceding `async_unload(old_entry)`
+    is supposed to clear those states, but in some setups a state lingers
+    (a rogue background task re-publishing during teardown, or the old
+    integration's `async_unload_entry` shortcuts the platform unload). We
+    defensively call `hass.states.async_remove` per row — it's idempotent,
+    so harmless when the state is already gone.
     """
     ent_reg = er.async_get(hass)
     prefix_old = f"{OLD_DOMAIN}_"
@@ -482,6 +490,8 @@ def _migrate_entity_registry_from_old(
         new_unique_id = entity.unique_id
         if new_unique_id.startswith(prefix_old):
             new_unique_id = prefix_new + new_unique_id[len(prefix_old):]
+
+        hass.states.async_remove(entity.entity_id)
 
         ent_reg.async_update_entity_platform(
             entity.entity_id,
