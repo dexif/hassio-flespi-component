@@ -176,6 +176,21 @@
       "abort": {
         "already_configured": "This device is already configured on this connection"
       }
+    },
+    "customer": {
+      "initiate_flow": {
+        "user": "Add account counters"
+      },
+      "entry_type": "Account counters",
+      "step": {
+        "user": {
+          "title": "Add account counters",
+          "description": "Expose flespi platform usage counters (API calls, MQTT messages, storage, etc.) as Home Assistant sensors. Requires a Master-level flespi token; Standard and ACL tokens will silently skip this feature."
+        }
+      },
+      "abort": {
+        "already_configured": "Account counters are already configured on this connection"
+      }
     }
   },
   "entity": {

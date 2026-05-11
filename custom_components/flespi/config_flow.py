@@ -55,6 +55,7 @@ from .const import (
     DOMAIN,
     MODE_DIRECT,
     MODE_HA_MQTT,
+    SUBENTRY_TYPE_CUSTOMER,
     SUBENTRY_TYPE_DEVICE,
 )
 from .pool import build_direct_client
@@ -274,8 +275,13 @@ class MqttFlespiMessageConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Expose the "device" subentry type so users can add more devices."""
-        return {SUBENTRY_TYPE_DEVICE: DeviceSubentryFlow}
+        """Expose subentry types: devices for all modes, customer counters for direct only."""
+        types: dict[str, type[ConfigSubentryFlow]] = {
+            SUBENTRY_TYPE_DEVICE: DeviceSubentryFlow,
+        }
+        if config_entry.data.get(CONF_MODE) == MODE_DIRECT:
+            types[SUBENTRY_TYPE_CUSTOMER] = CustomerSubentryFlow
+        return types
 
     # ---- top-level menu -----------------------------------------------------
 
@@ -829,6 +835,49 @@ class DeviceSubentryFlow(ConfigSubentryFlow):
             step_id="reconfigure",
             data_schema=_device_schema(defaults, mode=mode),
             errors=errors,
+        )
+
+
+# =============================================================================
+# Customer Subentry Flow — add account counters under a direct-mode connection
+# =============================================================================
+
+
+class CustomerSubentryFlow(ConfigSubentryFlow):
+    """Add flespi account counters to an existing direct-mode connection."""
+
+    def _main_entry(self) -> ConfigEntry:
+        return self._get_entry()
+
+    @callback
+    def async_create_entry(self, **kwargs: Any) -> SubentryFlowResult:
+        result = super().async_create_entry(**kwargs)
+        self.hass.loop.call_soon(
+            self.hass.config_entries.async_schedule_reload, self._entry_id
+        )
+        return result
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        entry = self._main_entry()
+        existing = [
+            s for s in entry.subentries.values()
+            if s.subentry_type == SUBENTRY_TYPE_CUSTOMER
+        ]
+        if existing:
+            return self.async_abort(reason="already_configured")
+
+        if user_input is not None:
+            return self.async_create_entry(
+                title="Account counters",
+                data={},
+                unique_id="customer",
+            )
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema({}),
         )
 
 

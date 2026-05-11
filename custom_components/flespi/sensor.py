@@ -6,11 +6,13 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import FlespiCoordinator
+from .customer_coordinator import FlespiCustomerCoordinator
+from .customer_sensor import FlespiCustomerSensor, build_customer_sensors, is_default_enabled
 from .entity import FlespiEntity, FlespiEntitySpec
 
 
@@ -26,6 +28,35 @@ async def async_setup_entry(
         ]
         if entities:
             async_add_entities(entities, config_subentry_id=subentry_id)
+
+    # Customer-counter sensors (only present when a customer subentry exists
+    # and the token is Master-level — see customer_coordinator.async_start).
+    customer_map: dict[str, FlespiCustomerCoordinator] = (
+        hass.data.get(DOMAIN, {}).get("_customer", {}).get(entry.entry_id, {})
+    )
+    for subentry_id, customer_coord in customer_map.items():
+        customer_sensors = build_customer_sensors(customer_coord)
+        if customer_sensors:
+            async_add_entities(customer_sensors, config_subentry_id=subentry_id)
+
+        @callback
+        def _on_new_counter(
+            counter_key: str,
+            _coord: FlespiCustomerCoordinator = customer_coord,
+            _sub_id: str = subentry_id,
+        ) -> None:
+            async_add_entities(
+                [
+                    FlespiCustomerSensor(
+                        _coord,
+                        counter_key,
+                        enabled_by_default=is_default_enabled(counter_key),
+                    )
+                ],
+                config_subentry_id=_sub_id,
+            )
+
+        customer_coord.on_new_key(_on_new_counter)
 
 
 class FlespiSensor(FlespiEntity, SensorEntity):

@@ -12,6 +12,7 @@ MODE_DIRECT = "direct"
 
 # Subentry type (each flespi device is a subentry of a connection main entry)
 SUBENTRY_TYPE_DEVICE = "device"
+SUBENTRY_TYPE_CUSTOMER = "customer"
 
 # Per-device config keys (stored on each subentry)
 CONF_DEV_ID = "dev_id"

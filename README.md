@@ -37,7 +37,8 @@
 Home Assistant integration for GPS trackers and telematics devices connected to [flespi](https://flespi.com/).
 One connection covers many devices; each device shows up as a standard HA device with GPS location on the map,
 speed / altitude / battery sensors out of the box, and optional auto-discovery of every other telemetry
-parameter the device reports.
+parameter the device reports. With a Master-level token you can also add **account counters** — flespi
+platform usage metrics (API calls, MQTT sessions, storage, entity counts, etc.) as HA sensors.
 
 ## Connection modes
 
@@ -83,6 +84,14 @@ of thousands of devices because the search is server-side.
 Additional devices on the same token: open the connection card and click **Add device** — the token
 is not asked again. All devices sharing the same token use a single MQTT session to `mqtt.flespi.io`.
 
+#### Account counters
+
+Open the connection card and click **Add account counters**. This creates a "Flespi account" device
+with sensors for every platform usage counter flespi publishes (`api/calls`, `mqtt/messages`,
+`devices/count`, channel/stream throughput, storage, errors, plan limits, etc.). Requires a
+**Master-level** flespi token — Standard and ACL tokens silently skip this feature. Only one
+account-counters entry per connection.
+
 Advanced options (host/port/TLS/protocol) are hidden from the UI and use sensible defaults
 (`mqtt.flespi.io`, port `8883`, TLS, MQTT v5). Users who had non-default values in 0.3.x keep them
 through migration.
@@ -123,6 +132,19 @@ Auto-discovered entities get proper `device_class` / units where possible: batte
 charging booleans → respective binary device classes. Good fit for dashboard cards like
 [Vehicle Status Card](https://github.com/ngocjohn/vehicle-status-card).
 
+### Account counters (direct mode, Master token)
+
+When an *Account counters* subentry is added, the integration creates a **Flespi account** device
+with sensors for every counter published on `flespi/state/platform/customer/counters/#`. Counters
+are auto-discovered from retained MQTT messages — new counters added by flespi appear automatically
+without a restart.
+
+**Enabled by default**: `api/calls`, `api/traffic`, `mqtt/sessions`, `mqtt/messages`, and every
+`*/count` counter (device, channel, stream, calculator, plugin, … counts). All other counters
+(storage, traffic, errors, plan limits, grants, etc.) are registered but disabled — enable what you
+need from the entity list. `_limit` sensors whose value is `-1` (unlimited plan) report as
+unavailable.
+
 ## Upgrading from 0.2.x or 0.3.x
 
 Migration is automatic: on the first restart with 0.4.0 installed, the integration scans every
@@ -135,6 +157,26 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
+- **0.6.0**
+  - **Account counters** — new subentry type for direct-mode connections.
+    Open the connection card → **Add account counters** to create a
+    "Flespi account" device with sensors for every platform usage counter
+    flespi publishes (API calls, MQTT messages/sessions, device/channel/stream
+    counts, storage, traffic, errors, plan limits, and more). Push-fed via
+    the `flespi/state/platform/customer/counters/#` retained topics on the
+    same pooled MQTT session — no extra connection, no polling. New counters
+    are auto-discovered without a restart.
+  - Enabled by default: `api/calls`, `api/traffic`, `mqtt/sessions`,
+    `mqtt/messages`, and every `*/count` counter. Everything else is
+    registered but disabled — enable from the entity list. `_limit` sensors
+    with value `-1` (unlimited) report as unavailable.
+  - Requires a **Master-level** flespi token. Standard and ACL tokens
+    silently skip the feature — flespi only delivers
+    `flespi/state/platform/*` topics to Master tokens.
+  - Infrastructure: `pool.py` now parses CONNACK `token` user property to
+    extract `cid` and `access.type`; `subscribe()` accepts MQTT v5
+    Properties (used to pass `cid` as a User Property on SUBSCRIBE for
+    subaccount scoping).
 - **0.5.8**
   - Migration hotfix for users upgrading from `mqtt_flespi_message` 0.4.x
     directly to 0.5.7 with multi-entity devices. The 0.5.7 migration combined

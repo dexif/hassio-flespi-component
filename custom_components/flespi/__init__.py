@@ -39,9 +39,11 @@ from .const import (
     MODE_DIRECT,
     MODE_HA_MQTT,
     PLATFORMS,
+    SUBENTRY_TYPE_CUSTOMER,
     SUBENTRY_TYPE_DEVICE,
 )
 from .coordinator import FlespiCoordinator
+from .customer_coordinator import FlespiCustomerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,6 +138,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             continue
         per_subentry[subentry_id] = coord
 
+    # Customer-counter subentries (direct mode only, Master token required).
+    # Stored separately from per_subentry to keep that map homogeneous.
+    customer_subentries = [
+        s for s in entry.subentries.values()
+        if s.subentry_type == SUBENTRY_TYPE_CUSTOMER
+    ]
+    customer_map: dict[str, FlespiCustomerCoordinator] = {}
+    for subentry in customer_subentries:
+        customer_coord = FlespiCustomerCoordinator(hass, entry)
+        try:
+            started = await customer_coord.async_start()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Failed to start customer-counters coordinator")
+            started = False
+        if started:
+            customer_map[subentry.subentry_id] = customer_coord
+    if customer_map:
+        hass.data[DOMAIN].setdefault("_customer", {})[entry.entry_id] = (
+            customer_map
+        )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -152,6 +175,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await coord.async_stop()
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Error stopping coordinator during unload")
+        customer_map: dict[str, FlespiCustomerCoordinator] = (
+            hass.data.get(DOMAIN, {}).get("_customer", {}).pop(entry.entry_id, {})
+        )
+        for ccoord in customer_map.values():
+            try:
+                await ccoord.async_stop()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Error stopping customer-counters coordinator during unload"
+                )
     return unload_ok
 
 

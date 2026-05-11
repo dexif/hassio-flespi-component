@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Callable
 
 import paho.mqtt.client as mqtt_client
+from paho.mqtt.properties import Properties
 
 from homeassistant.core import HomeAssistant
 
@@ -61,8 +63,21 @@ class FlespiDirectClient:
         # Topic filter -> list of HA-loop callbacks. Multiplexes multiple subscribers
         # on the same filter (rare in practice, but cheap insurance).
         self._topic_callbacks: dict[str, list[TopicCallback]] = {}
+        # The actual SUBSCRIBE packet topic per filter. Usually equals the filter,
+        # but can differ when a flespi-specific prefix is needed. Stored
+        # separately so we re-issue the right SUBSCRIBE on reconnect.
+        self._subscribe_topics: dict[str, str] = {}
+        # MQTT v5 properties attached to the SUBSCRIBE packet per filter
+        # (e.g. cid User Property for subaccount scoping). Stored for reconnect.
+        self._subscribe_properties: dict[str, Properties | None] = {}
         self._connected = False
         self._ref_count = 0
+        # Identity from CONNACK user properties (flespi v5). `cid` is the customer
+        # id this token belongs to; `access_type` is 1=Master, 0=Standard, 2=ACL.
+        # Set via _on_connect, awaited by callers via `wait_identity()`.
+        self.cid: int | None = None
+        self.access_type: int | None = None
+        self._identity_event = asyncio.Event()
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
 
@@ -75,9 +90,53 @@ class FlespiDirectClient:
             )
             return
         self._connected = True
+        self._extract_identity(properties)
         # Restore every subscription — paho drops them on disconnect.
-        for topic_filter in self._topic_callbacks:
-            client.subscribe(topic_filter, qos=0)
+        for topic_filter, subscribe_topic in self._subscribe_topics.items():
+            props = self._subscribe_properties.get(topic_filter)
+            client.subscribe(subscribe_topic, qos=0, properties=props)
+
+    def _extract_identity(self, properties) -> None:
+        """Pull `cid` and `access.type` from the CONNACK `token` user property.
+
+        flespi v5 brokers return the full token JSON as a `token` user property
+        on CONNACK. v3.x has no user properties — `cid`/`access_type` stay None
+        and customer-counter subscribers will skip silently.
+        """
+        if properties is None or not getattr(properties, "UserProperty", None):
+            self.hass.loop.call_soon_threadsafe(self._identity_event.set)
+            return
+        token_blob: str | None = next(
+            (v for k, v in properties.UserProperty if k == "token"), None
+        )
+        if token_blob is None:
+            self.hass.loop.call_soon_threadsafe(self._identity_event.set)
+            return
+        try:
+            parsed = json.loads(token_blob)
+            self.cid = int(parsed.get("cid")) if parsed.get("cid") is not None else None
+            access = parsed.get("access") or {}
+            self.access_type = (
+                int(access.get("type")) if access.get("type") is not None else None
+            )
+        except (ValueError, TypeError, json.JSONDecodeError):
+            _LOGGER.warning(
+                "Could not parse CONNACK token property for %s — customer "
+                "counters will be unavailable",
+                self.key[0],
+            )
+        self.hass.loop.call_soon_threadsafe(self._identity_event.set)
+
+    async def wait_identity(self, timeout: float = 10.0) -> None:
+        """Block until CONNACK has been processed (cid/access_type populated, or known unavailable)."""
+        try:
+            await asyncio.wait_for(self._identity_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Timed out waiting for CONNACK identity from %s after %.1fs",
+                self.key[0],
+                timeout,
+            )
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._connected = False
@@ -102,20 +161,37 @@ class FlespiDirectClient:
         await self.hass.async_add_executor_job(_stop)
 
     def subscribe(
-        self, topic_filter: str, callback: TopicCallback
+        self,
+        topic_filter: str,
+        callback: TopicCallback,
+        *,
+        subscribe_topic: str | None = None,
+        properties: Properties | None = None,
     ) -> Callable[[], None]:
         """Register a callback for a topic filter. Returns an unsubscribe handle.
 
         `callback(topic, payload)` is invoked on the HA event loop for every
-        message whose topic matches this filter.
+        message whose topic matches `topic_filter` (paho-side pattern matching
+        on the *received* topic).
+
+        `subscribe_topic` is what we send in the SUBSCRIBE packet — usually
+        equal to `topic_filter`, but can differ when a flespi-specific prefix
+        is needed.
+
+        `properties` — optional MQTT v5 Properties for the SUBSCRIBE packet
+        (e.g. ``cid`` User Property for subaccount scoping).
         """
         loop = self.hass.loop
+        actual_subscribe = subscribe_topic or topic_filter
 
         callbacks = self._topic_callbacks.setdefault(topic_filter, [])
         first_subscriber = not callbacks
         callbacks.append(callback)
 
         if first_subscriber:
+            self._subscribe_topics[topic_filter] = actual_subscribe
+            self._subscribe_properties[topic_filter] = properties
+
             # Paho dispatches matching messages to this specific filter callback.
             def _paho_cb(client, userdata, message) -> None:
                 for cb in self._topic_callbacks.get(topic_filter, []):
@@ -123,7 +199,7 @@ class FlespiDirectClient:
 
             self._client.message_callback_add(topic_filter, _paho_cb)
             if self._connected:
-                self._client.subscribe(topic_filter, qos=0)
+                self._client.subscribe(actual_subscribe, qos=0, properties=properties)
 
         def _unsub() -> None:
             cbs = self._topic_callbacks.get(topic_filter)
@@ -133,9 +209,11 @@ class FlespiDirectClient:
                 cbs.remove(callback)
             if not cbs:
                 self._topic_callbacks.pop(topic_filter, None)
+                self._subscribe_topics.pop(topic_filter, None)
+                self._subscribe_properties.pop(topic_filter, None)
                 self._client.message_callback_remove(topic_filter)
                 if self._connected:
-                    self._client.unsubscribe(topic_filter)
+                    self._client.unsubscribe(actual_subscribe)
 
         return _unsub
 
