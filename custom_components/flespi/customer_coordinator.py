@@ -72,10 +72,16 @@ class FlespiCustomerCoordinator:
             raise
 
         if pool_client.access_type != _ACCESS_TYPE_MASTER:
+            _LOGGER.info(
+                "Token access_type=%s (need Master=%d) — skipping customer counters",
+                pool_client.access_type,
+                _ACCESS_TYPE_MASTER,
+            )
             await pool.release(pool_client)
             return False
 
         self.cid = pool_client.cid
+        _LOGGER.info("Customer counters: cid=%s, subscribing to %s", self.cid, _COUNTERS_TOPIC_FILTER)
 
         # Pass cid as an MQTT v5 User Property on the SUBSCRIBE packet
         # so the broker scopes delivery to this customer.
@@ -104,6 +110,9 @@ class FlespiCustomerCoordinator:
             await self.async_stop()
             raise
 
+        _LOGGER.info(
+            "Customer counters ready: %d counter(s) received", len(self.data)
+        )
         return True
 
     async def async_stop(self) -> None:
@@ -116,7 +125,7 @@ class FlespiCustomerCoordinator:
         try:
             await asyncio.wait_for(self._got_data.wait(), timeout)
         except asyncio.TimeoutError:
-            _LOGGER.debug(
+            _LOGGER.warning(
                 "No customer counters received within %.1fs -- "
                 "sensors will populate as messages arrive",
                 timeout,

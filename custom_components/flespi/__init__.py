@@ -154,6 +154,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             started = False
         if started:
             customer_map[subentry.subentry_id] = customer_coord
+        else:
+            _LOGGER.warning(
+                "Customer-counters coordinator did not start for subentry %s",
+                subentry.subentry_id,
+            )
     if customer_map:
         hass.data[DOMAIN].setdefault("_customer", {})[entry.entry_id] = (
             customer_map
