@@ -6,7 +6,7 @@
   "after_dependencies": [
     "mqtt"
   ],
-  "codeowners": [],
+  "codeowners": ["@dexif"],
   "config_flow": true,
   "iot_class": "cloud_push",
   "version": "0.6.0"
