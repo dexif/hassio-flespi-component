@@ -3,36 +3,37 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![license_badge](https://img.shields.io/github/license/dexif/ha-flespi)](https://github.com/dexif/ha-flespi/blob/master/LICENSE)
 
-> [!IMPORTANT]
-> **Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.7 or newer).**
->
-> 0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
-> integration's path from the first time the repository was added and never refreshes it on update,
-> so a normal HACS update fails with `No manifest.json file found
-> 'custom_components/mqtt_flespi_message/manifest.json'`. This is a HACS limitation, not a bug in
-> the integration.
->
-> **What to do — once:**
->
-> 1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
->    — it does **not** delete files on disk and does **not** touch your Home Assistant config.
->    Your devices, history, and automations stay intact.
-> 2. Add the repository back as a custom repository (Integration type) and install **0.5.7** (or
->    newer). Earlier 0.5.x versions had migration bugs that left devices stranded on the old
->    domain.
-> 3. Restart Home Assistant.
-> 4. Open *Settings → Devices & Services → + Add Integration* and search for **Flespi**. Two
->    entries with the same name appear — click either; the new integration detects the orphan
->    entries and shows a migration form. Submit it to re-parent every config entry, device, and
->    entity registry row from `mqtt_flespi_message` to `flespi`. `entity_id`s, Recorder history,
->    Lovelace cards, and automations continue to work unchanged.
-> 5. After a successful migration, manually delete the leftover
->    `custom_components/mqtt_flespi_message/` folder from your `config/custom_components/`
->    directory. HACS does not clean up old-domain folders on update; the folder is harmless to
->    leave in place but contributes a duplicate "Flespi" entry to the *Add Integration* picker
->    until you remove it.
->
-> After this one-time step, future HACS updates work normally.
+<details>
+<summary><b>Upgrading from 0.4.x — one-time HACS reinstall required (install 0.5.7 or newer)</b></summary>
+
+0.5.0 renamed the integration's domain from `mqtt_flespi_message` to `flespi`. HACS caches the
+integration's path from the first time the repository was added and never refreshes it on update,
+so a normal HACS update fails with `No manifest.json file found
+'custom_components/mqtt_flespi_message/manifest.json'`. This is a HACS limitation, not a bug in
+the integration.
+
+**What to do — once:**
+
+1. In HACS, open this repository → ⋮ menu → **Remove**. This only unregisters the repo from HACS
+   — it does **not** delete files on disk and does **not** touch your Home Assistant config.
+   Your devices, history, and automations stay intact.
+2. Add the repository back as a custom repository (Integration type) and install **0.5.7** (or
+   newer). Earlier 0.5.x versions had migration bugs that left devices stranded on the old
+   domain.
+3. Restart Home Assistant.
+4. Open *Settings → Devices & Services → + Add Integration* and search for **Flespi**. Two
+   entries with the same name appear — click either; the new integration detects the orphan
+   entries and shows a migration form. Submit it to re-parent every config entry, device, and
+   entity registry row from `mqtt_flespi_message` to `flespi`. `entity_id`s, Recorder history,
+   Lovelace cards, and automations continue to work unchanged.
+5. After a successful migration, manually delete the leftover
+   `custom_components/mqtt_flespi_message/` folder from your `config/custom_components/`
+   directory. HACS does not clean up old-domain folders on update; the folder is harmless to
+   leave in place but contributes a duplicate "Flespi" entry to the *Add Integration* picker
+   until you remove it.
+
+After this one-time step, future HACS updates work normally.
+</details>
 
 Home Assistant integration for GPS trackers and telematics devices connected to [flespi](https://flespi.com/).
 One connection covers many devices; each device shows up as a standard HA device with GPS location on the map,
@@ -157,216 +158,17 @@ automations, dashboards and Recorder history keep working.
 
 ## Changelog
 
-- **0.6.0**
-  - **Account counters** — new subentry type for direct-mode connections.
-    Open the connection card → **Add account counters** to create a
-    "Flespi account" device with sensors for every platform usage counter
-    flespi publishes (API calls, MQTT messages/sessions, device/channel/stream
-    counts, storage, traffic, errors, plan limits, and more). Push-fed via
-    the `flespi/state/platform/customer/counters/#` retained topics on the
-    same pooled MQTT session — no extra connection, no polling. New counters
-    are auto-discovered without a restart.
-  - Enabled by default: `api/calls`, `api/traffic`, `mqtt/sessions`,
-    `mqtt/messages`, and every `*/count` counter. Everything else is
-    registered but disabled — enable from the entity list. `_limit` sensors
-    with value `-1` (unlimited) report as unavailable.
-  - Requires a **Master-level** flespi token. Standard and ACL tokens
-    silently skip the feature — flespi only delivers
-    `flespi/state/platform/*` topics to Master tokens.
-  - Infrastructure: `pool.py` now parses CONNACK `token` user property to
-    extract `cid` and `access.type`; `subscribe()` accepts MQTT v5
-    Properties (used to pass `cid` as a User Property on SUBSCRIBE for
-    subaccount scoping).
-- **0.5.8**
-  - Migration hotfix for users upgrading from `mqtt_flespi_message` 0.4.x
-    directly to 0.5.7 with multi-entity devices. The 0.5.7 migration combined
-    `add_config_entry_id + add_config_subentry_id + remove_config_entry_id`
-    in a single `async_update_device` call, hitting an HA core ordering quirk
-    (still present in 2026.4) where the remove path overwrites the local
-    `config_entries_subentries` with `dict(old.config_entries_subentries)`
-    and silently loses the new entry's subentry mapping. The follow-up loop
-    over per-entity subentry ids (which contained duplicates) then crashed
-    with `KeyError: '<new_entry_id>'`.
-  - Fix splits the first call into add-only + remove-only and deduplicates
-    the inferred subentry list. Cross-domain migrations now finish without
-    the inconsistent intermediate state.
-  - Repair step strengthened: `_repair_device_subentry_bindings` no longer
-    relies on `async_update_device(remove_config_entry_id=...)` (which itself
-    KeyErrors on devices already in the broken state). Rebuilds the mapping
-    directly via `attr.evolve` on the frozen `DeviceEntry` and writes it back
-    through `DeviceRegistryItems` — recovers devices left half-migrated by
-    0.5.6/0.5.7 attempts.
-- **0.5.7**
-  - Repair step on `async_setup_entry` for devices migrated by 0.5.6 with
-    an inconsistent `config_entries_subentries` mapping. The 0.5.6
-    migration could call `async_update_device(add_config_subentry_id=None)`
-    when the old device had no specific subentry binding; HA core then
-    adds the entry to `config_entries` but does NOT initialize the
-    matching `config_entries_subentries[entry_id]` mapping, so subsequent
-    `async_get_or_create_device` calls during entity setup crash with
-    `KeyError: '<entry_id>'`. The repair detects the mismatch, infers the
-    correct subentry from the entity registry, and rebuilds the binding
-    via `remove_config_entry_id` + fresh `add_config_entry_id +
-    add_config_subentry_id`. Idempotent — no-op for fresh installs and
-    consistently-bound entries.
-  - Migration fix for the same root cause: `_migrate_device_registry_from_old`
-    now infers the target subentry from the entity registry (entities are
-    re-parented before devices, so they carry the canonical
-    `config_subentry_id`). Falls back to the old device-side mapping but
-    only uses real subentry ids — never passes `add_config_subentry_id=None`
-    again.
-- **0.5.6**
-  - Migration round-up. Audited the whole `_migrate_entry_from_old_domain`
-    path against HA core master and fixed every constraint that could
-    trip:
-    - Pass `new_config_subentry_id` explicitly to
-      `async_update_entity_platform` (HA core validator requires it
-      whenever `config_entry_id` changes for a row that has a subentry —
-      `Can't change config entry without changing subentry`).
-    - Mirror missing subentries on the new entry **before** the
-      device-registry rewrite (resume path used to crash with
-      `Config entry X has no subentry Y` because the device update
-      referenced a subentry the new entry didn't yet have).
-    - Pre-check device-identifier collisions: a previous half-finished
-      attempt could leave an orphan flespi-domain device with the new
-      identifiers, which would then trigger `DeviceIdentifierCollisionError`
-      on retry. Drop the duplicate before rewriting the surviving device.
-    - Empty-set guard on `device.config_entries_subentries.get(...)` —
-      HA removes the entry-id key when the last subentry is removed, so
-      the existing `or {None}` default missed that path.
-    - `source=SOURCE_IMPORT` instead of the freeform string `"migration"`,
-      so any HA code branching on `source` doesn't see an unknown value.
-    - `try/except` around `async_set_disabled_by(None)` so a setup_entry
-      failure (e.g. flespi REST/MQTT unreachable at the moment of
-      enabling) is logged but doesn't roll back the registry rewrite —
-      the migration is durable; the next restart re-tries setup.
-- **0.5.5**
-  - Migration fix (round 2): defensively call `hass.states.async_remove`
-    on each entity right before `async_update_entity_platform`. The 0.5.4
-    `async_unload` is supposed to clear `hass.states` for the old entry's
-    entities, but in some setups a state lingers — likely a coordinator
-    background task re-publishing during teardown — and HA core's check
-    `hass.states.get(entity_id) is not None and state.state !=
-    STATE_UNKNOWN` then aborts the migration. `hass.states.async_remove`
-    is idempotent, so it's a harmless backstop when the unload already
-    cleaned up.
-- **0.5.4**
-  - Migration fix: unload the old `mqtt_flespi_message` entry before
-    re-parenting the entity and device registries. Without this,
-    `async_update_entity_platform` rejected the rewrite with
-    `Only entities that haven't been loaded can be migrated` — the
-    config-flow migration runs after Home Assistant has already set up the
-    old integration's entries, so its entities are live by the time we try
-    to move them. (The 0.4.5/0.4.6 shim avoided this because it ran inside
-    `async_setup`, before any entry was loaded — but that path is broken
-    for unrelated reasons, see 0.5.3.)
-- **0.5.3**
-  - Fixed the cross-domain migration: the new integration now registers the
-    target `flespi` config entry as disabled before re-parenting the entity
-    and device registries, and re-enables it once the rows are moved. This
-    works around HA core's tightened `_validate_item` check (`Can't link
-    entity to unknown config entry`) that broke the same migration in
-    0.4.5/0.4.6's dormant shim and in 0.5.2.
-  - Added a one-time migration step to the *Add Integration → Flespi* flow.
-    When orphan `mqtt_flespi_message` config entries are detected, the
-    wizard shows a confirmation form ("Found N configuration(s) and M
-    device(s) on the previous integration — migrate?") and runs the rewrite
-    on submit. This solves the chicken-and-egg where the new integration
-    couldn't auto-migrate on startup because it had no config entries yet
-    (and Home Assistant therefore didn't load it).
-- **0.5.2**
-  - Cross-domain migration is now also performed from the new `flespi`
-    side. The 0.4.5/0.4.6 shim still does the work when the old folder is
-    on disk, but if it never ran (user jumped from 0.4.4 or earlier, the
-    shim threw an unrelated exception, etc.), the new integration now
-    detects orphan `mqtt_flespi_message` config entries on startup and
-    re-parents them itself. Same end state, double safety net.
-  - If you installed 0.5.0 or 0.5.1 on top of 0.4.x and ended up with
-    **two "Flespi" entries** showing in *Add Integration* (your devices
-    still attached to the old version 0.4.6 integration card), upgrading
-    to 0.5.2 and restarting will move everything onto the `flespi` domain.
-    The old `custom_components/mqtt_flespi_message/` folder can then be
-    removed manually — it's a no-op once the migration has run.
-- **0.5.1**
-  - Documentation only — no code changes. Added the HACS reinstall workaround
-    for 0.4.x → 0.5.x upgrades (top-of-README warning block + dedicated
-    section in the GitHub release notes), plus changelog entries for 0.4.6
-    and 0.5.0 that were missing.
-- **0.5.0**
-  - Domain rename: `mqtt_flespi_message` → `flespi`. The integration's display
-    name was already "Flespi" since 0.4.4; the internal domain now matches.
-  - Existing installs migrate automatically on the first restart after upgrade,
-    via the dormant shim shipped in 0.4.5: config entries, devices, entities,
-    and registry rows are re-parented to the new domain. `entity_id`s, Recorder
-    history, Lovelace cards, and automations continue to work unchanged.
-  - **Upgrading from 0.4.x requires a one-time HACS reinstall** — see the
-    upgrade box at the top of this README. HACS caches the integration's path
-    on first registration and doesn't re-scan it on update, so a normal HACS
-    update fails with `No manifest.json file found
-    'custom_components/mqtt_flespi_message/manifest.json'`. Workaround: ensure
-    0.4.5 has run, then remove and re-add the repo in HACS before installing
-    0.5.0.
-  - Removed the deprecated YAML platform import (`device_tracker:` `platform:
-    mqtt_flespi_message`). The `flespi:` YAML section never existed, so there
-    is nothing in the new domain for it to import.
-- **0.4.6**
-  - Direct mode: dropped the per-parameter `flespi/state/.../telemetry/#`
-    subscription. Per-param topics arrived as separate MQTT packets and caused
-    `position.latitude` / `position.longitude` updates to land out of sync,
-    producing a staircase trail on the map. Live updates now flow only through
-    the device-message topic, where all parameters are atomic.
-  - Initial values are seeded from the REST telemetry snapshot on startup —
-    unconditionally in direct mode, not just when auto-discovery is on — so
-    the device tracker and legacy sensors have values immediately on first
-    load.
-- **0.4.5**
-  - Dormant migration shim for the upcoming domain rename. Behavior is identical
-    to 0.4.4; no user action required. When the next release ships the new
-    `flespi` domain on disk, this shim activates automatically on the next HA
-    restart and migrates every existing entry over (config entries, entity
-    registry unique_id and platform, device registry identifiers), preserving
-    `entity_id`s and Recorder history.
-- **0.4.4**
-  - Renamed the integration to **Flespi** (was "Mqtt flespi message"). Display-name change
-    only — domain (`mqtt_flespi_message`) is unchanged in this release, so existing
-    configurations, entity IDs and Recorder history are unaffected.
-  - Repository moved to [`dexif/ha-flespi`](https://github.com/dexif/ha-flespi). GitHub
-    redirects the old URL automatically; HACS picks up the rename without manual action.
-  - Heads-up: the domain will change to `flespi` in an upcoming release (planned for 0.5.0).
-    The transition will include an automatic migration that preserves entity IDs and history,
-    same approach as the 0.4.0 subentry migration. No action required from users.
-- **0.4.2**
-  - Auto-discovered sensors are now added in two tiers: a curated set (legacy five plus
-    `fuel.level`, `engine.ignition.status`, `external.powersource.voltage`, `can.fuel.volume`,
-    `can.fuel.level`) is enabled by default; everything else is registered but disabled.
-  - New **Enable all auto-discovered sensors** toggle in the device form / reconfigure to flip
-    all auto-discovered entities on at once.
-- **0.4.1**
-  - Fixed `/gw/message-parameters` field names — auto-discovery now reads the correct `unit`
-    (singular) and `info` fields, so units and human-readable descriptions land on the entities.
-- **0.4.0**
-  - Subentry model: one main entry per connection, one subentry per device. Add many devices under
-    the same token without retyping credentials.
-  - Shared MQTT client per connection — N devices on one token now use one TCP/TLS session
-    instead of N.
-  - Simplified direct-mode UI: the form asks for a token and a numeric flespi device ID; the MQTT
-    topic is constructed automatically.
-  - Reconfigure token on the connection card; reconfigure per-device on each subentry card.
-  - Automatic migration from 0.2.x / 0.3.x entries, preserving entity IDs and history.
-- **0.3.0**
-  - Direct connection mode to the flespi MQTT broker (no bridge required).
-  - Device discovery in the config flow — search your flespi account by name/IMEI.
-  - Auto-discovery of sensors and binary_sensors from the device's telemetry.
-  - `binary_sensor` platform: new online/connected sensor plus auto-discovered booleans.
-  - MQTT protocol selector (3.1 / 3.1.1 / 5, default 5).
-  - Retained state-topic bootstrap in direct mode (entities hydrate instantly after HA restart).
-- **0.2.1** Reconfigure step for device name and MQTT topic.
-- **0.2.0** Modernized to config flow UI, added telemetry sensors, YAML auto-migration.
-- **0.1.4** Support for device telemetry position format.
-- **0.1.3** Fixed HA compatibility.
-- **0.1.2** Fix import.
-- **0.1.1** Added [HACS](https://github.com/hacs/integration) compatibility.
-- **0.1.0** Now compatible with version 0.93.
+- **0.6.0** — Account counters subentry (direct mode, Master token). ~140 flespi platform usage sensors, auto-discovered from MQTT retained topics.
+- **0.5.0–0.5.8** — Domain rename `mqtt_flespi_message` → `flespi` with automatic migration. 0.5.1–0.5.8 fix edge cases. One-time HACS reinstall required from 0.4.x — see upgrade note above.
+- **0.4.6** — Atomic device-message updates (fixes staircase trail on map). REST telemetry seed on startup.
+- **0.4.5** — Dormant migration shim for the upcoming domain rename.
+- **0.4.4** — Renamed to "Flespi". Repository moved to [dexif/ha-flespi](https://github.com/dexif/ha-flespi).
+- **0.4.2** — Two-tier auto-discovery: curated set enabled by default, rest disabled. "Enable all" toggle.
+- **0.4.1** — Fixed auto-discovery field names (`unit`, `info`).
+- **0.4.0** — Subentry model (one connection, many devices). Shared MQTT client per token. Migration from 0.2.x/0.3.x.
+- **0.3.0** — Direct connection to flespi broker. Device search. Auto-discovery. Online sensor. Retained bootstrap.
+- **0.2.0** — Config flow UI, telemetry sensors, YAML auto-migration.
+- **0.1.x** — Initial releases, HACS compatibility.
 
 ## Links
 
