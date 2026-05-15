@@ -1,7 +1,5 @@
 {
   "name": "Flespi",
-  "domains": ["binary_sensor", "device_tracker", "sensor"],
   "iot_class": "cloud_push",
-  "render_readme": true,
-  "version": "0.6.0"
+  "render_readme": true
 }

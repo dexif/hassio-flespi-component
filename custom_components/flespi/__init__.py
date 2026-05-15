@@ -19,7 +19,7 @@ from homeassistant.config_entries import (
     ConfigSubentryDataWithId,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
@@ -46,6 +46,8 @@ from .coordinator import FlespiCoordinator
 from .customer_coordinator import FlespiCustomerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # The previous domain. The cross-domain migrator below picks up any orphan
 # entries still attached to it (users who upgraded directly from a version

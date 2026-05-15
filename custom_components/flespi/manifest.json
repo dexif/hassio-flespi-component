@@ -1,13 +1,14 @@
 {
   "domain": "flespi",
   "name": "Flespi",
-  "documentation": "https://flespi.com/blog/smart-home-with-a-human-touch-teaching-home-assistant-to-serve-you-coffee",
-  "requirements": [],
   "after_dependencies": [
     "mqtt"
   ],
   "codeowners": ["@dexif"],
   "config_flow": true,
+  "documentation": "https://flespi.com/blog/smart-home-with-a-human-touch-teaching-home-assistant-to-serve-you-coffee",
   "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/dexif/ha-flespi/issues",
+  "requirements": [],
   "version": "0.6.0"
 }
